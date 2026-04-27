@@ -1,0 +1,90 @@
+name: LinkedIn Sunday Automation
+
+# Runs every Sunday at 9 AM Toronto time (2 PM UTC)
+# Also can be triggered manually from GitHub Actions tab
+on:
+  schedule:
+    - cron: '0 14 * * 0'
+  workflow_dispatch:
+    inputs:
+      week_override:
+        description: 'Override week number (leave empty for auto-detect)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run (no actual email sent)'
+        required: false
+        type: boolean
+        default: false
+      tuesday_start:
+        description: 'Tuesday start this week (first week only)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  linkedin-automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run LinkedIn automation (send learning input email)
+        env:
+          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+          BUFFER_ACCESS_TOKEN:  ${{ secrets.BUFFER_ACCESS_TOKEN }}
+          BUFFER_PROFILE_ID:    ${{ secrets.BUFFER_PROFILE_ID }}
+          APPROVAL_SECRET:      ${{ secrets.APPROVAL_SECRET }}
+          APPROVAL_SERVER_URL:  ${{ secrets.APPROVAL_SERVER_URL }}
+          BASE_URL:             ${{ secrets.APPROVAL_SERVER_URL }}
+          SMTP_EMAIL:           ${{ secrets.SMTP_EMAIL }}
+          SMTP_PASSWORD:        ${{ secrets.SMTP_PASSWORD }}
+          NOTIFY_EMAIL:         ${{ secrets.NOTIFY_EMAIL }}
+          JOURNEY_START_DATE:   ${{ secrets.JOURNEY_START_DATE }}
+        run: |
+          WEEK_ARG=""
+          DRY_RUN_ARG=""
+          TUESDAY_ARG=""
+
+          if [ -n "${{ github.event.inputs.week_override }}" ]; then
+            WEEK_ARG="--week ${{ github.event.inputs.week_override }}"
+          fi
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_ARG="--dry-run"
+          fi
+
+          if [ "${{ github.event.inputs.tuesday_start }}" = "true" ]; then
+            TUESDAY_ARG="--tuesday-start"
+          fi
+
+          python -m src.auto_run $WEEK_ARG $DRY_RUN_ARG $TUESDAY_ARG
+
+      - name: Upload run log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: automation-log-${{ github.run_number }}
+          path: auto_run.log
+          retention-days: 30
+
+      - name: Upload generated posts (if any)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linkedin-posts-${{ github.run_number }}
+          path: |
+            posts/
+            research/
+          retention-days: 30
