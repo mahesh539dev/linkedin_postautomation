@@ -143,9 +143,19 @@ def generate_and_store(week: int, notes: str, tuesday_start: bool):
             "expires_at": expires_at.isoformat(),
         }
 
-        to_email = os.getenv("NOTIFY_EMAIL", "mahesh.annapureddy5@gmail.com")
-        send_review_email(to_email, token, week, data.get("posts", []))
-        print(f"Generation done. Review: {get_base_url()}/review/{token}")
+        review_url = f"{get_base_url()}/review/{token}"
+        to_email   = os.getenv("NOTIFY_EMAIL", "mahesh.annapureddy5@gmail.com")
+        sent       = send_review_email(to_email, token, week, data.get("posts", []))
+
+        print("=" * 60)
+        print(f"GENERATION COMPLETE — Week {week}")
+        print(f"Review URL: {review_url}")
+        if sent:
+            print(f"Approval email sent to {to_email}")
+        else:
+            print(f"EMAIL FAILED — open this URL manually: {review_url}")
+            print(f"Check SMTP_EMAIL / SMTP_PASSWORD in Railway env vars")
+        print("=" * 60)
 
     except Exception as e:
         print(f"Background generation failed: {e}")
@@ -431,6 +441,27 @@ for(let i=0;i<N;i++) cc(i);
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "time": datetime.now().isoformat()})
+
+
+@app.route("/reviews")
+def list_reviews():
+    """List all pending review links. Open this if approval email didn't arrive."""
+    secret = request.args.get("secret", "")
+    if not hmac.compare_digest(secret, SECRET_KEY):
+        return jsonify({"error": "Pass ?secret=YOUR_APPROVAL_SECRET"}), 401
+    now = datetime.now()
+    items = []
+    for token, stored in pending_reviews.items():
+        data       = stored["data"]
+        expires_at = stored.get("expires_at", "")
+        items.append({
+            "week":       data.get("week"),
+            "theme":      data.get("week_theme", ""),
+            "posts":      len(data.get("posts", [])),
+            "review_url": f"{get_base_url()}/review/{token}",
+            "expires_at": expires_at,
+        })
+    return jsonify({"pending": len(items), "reviews": items})
 
 
 @app.route("/input/<int:week>", methods=["GET"])
