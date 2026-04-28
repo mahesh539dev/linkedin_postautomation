@@ -102,45 +102,34 @@ Find 6 topics total. Return as JSON:
 
 def research_weekly_topics(week_number: int, save: bool = True) -> dict:
     """
-    Use Claude with web search to find this week's best LinkedIn topics.
+    Fetch trending topics via HN/SerpAPI then rank with DeepSeek.
     Returns dict with ranked topics and recommendations.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set in .env")
-
-    client = anthropic.Anthropic(api_key=api_key, max_retries=3)
+    from src.trend_fetcher import fetch_trends
+    from src.llm_client import call_llm
 
     today = datetime.now().strftime("%A, %B %d %Y")
 
     print(f"\n🔍 Researching trending topics for Week {week_number}...")
     print(f"   Date: {today}")
-    print(f"   Searching AI infrastructure, MLOps, Kafka, LLMs, K8s...")
+    print(f"   Fetching from HN Algolia + optional SerpAPI...")
 
-    message = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=4096,
-        system=RESEARCH_SYSTEM_PROMPT,
-        tools=[{
-            "type": "web_search_20250305",
-            "name": "web_search"
-        }],
-        messages=[
-            {
-                "role": "user",
-                "content": RESEARCH_USER_PROMPT.format(
-                    context=ENGINEER_CONTEXT,
-                    date=today
-                )
-            }
-        ]
+    raw_trends = fetch_trends()
+    if not raw_trends:
+        raise ValueError("fetch_trends returned no data — check network or use --fallback")
+
+    trends_text = "\n".join(
+        f"- [{t['source']}] {t['title']}  ({t['url']})"
+        for t in raw_trends
     )
 
-    # Extract final text response (after any tool use)
-    raw = ""
-    for block in message.content:
-        if block.type == "text":
-            raw += block.text
+    ranking_prompt = (
+        f"Here are today's trending items from the past week:\n{trends_text}\n\n"
+        + RESEARCH_USER_PROMPT.format(context=ENGINEER_CONTEXT, date=today)
+    )
+
+    print(f"   Ranking {len(raw_trends)} trends with DeepSeek...")
+    raw = call_llm("deepseek", ranking_prompt, system=RESEARCH_SYSTEM_PROMPT, max_tokens=3000)
 
     # Strip markdown if present
     if "```json" in raw:
@@ -152,7 +141,6 @@ def research_weekly_topics(week_number: int, save: bool = True) -> dict:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        # Try to extract JSON if wrapped in text
         import re
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:

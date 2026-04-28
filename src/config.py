@@ -17,6 +17,13 @@ TUESDAY_START_THIS_WEEK = os.getenv("TUESDAY_START_THIS_WEEK", "false").lower() 
 CLAUDE_MODEL        = "claude-sonnet-4-20250514"
 BUFFER_API_BASE     = "https://api.bufferapp.com/1"
 
+OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
+SERPAPI_KEY         = os.getenv("SERPAPI_KEY", "")
+DEEPSEEK_MODEL      = "deepseek/deepseek-chat"
+KIMI_MODEL          = "moonshotai/moonshot-v1-8k"
+MINIMAX_MODEL       = "minimax/minimax-01"
+CLAUDE_REFINE_MODEL = "claude-haiku-4-5-20251001"
+
 ENGINEER_CONTEXT = """
 Name: Mahesh Annapureddy
 Role: Senior Consultant at Capgemini, transitioning to AI Infrastructure Engineer

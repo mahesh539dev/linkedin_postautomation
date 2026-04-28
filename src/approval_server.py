@@ -130,6 +130,12 @@ def generate_and_store(week: int, notes: str, tuesday_start: bool):
 
         data = generate_posts(week, research, notes, save=True)
 
+        try:
+            from src.refinement import refine_posts
+            data["posts"] = refine_posts(data["posts"])
+        except Exception as e:
+            print(f"Refinement step failed ({e}), continuing with unrefined posts")
+
         token      = str(uuid.uuid4()).replace("-", "")[:24]
         expires_at = datetime.now() + timedelta(hours=48)
         pending_reviews[token] = {

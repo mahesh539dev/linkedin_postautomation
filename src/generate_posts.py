@@ -155,11 +155,7 @@ def generate_posts(
     """
     Generate 5 LinkedIn posts mixing industry research + personal learning.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set in .env")
-
-    client = anthropic.Anthropic(api_key=api_key, max_retries=3)
+    from src.llm_client import call_llm
 
     research_topics = research_data.get("topics", [])
     if not research_topics:
@@ -175,14 +171,7 @@ def generate_posts(
         POST_SCHEDULE
     )
 
-    message = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=5000,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    raw = message.content[0].text.strip()
+    raw = call_llm("kimi", prompt, system=SYSTEM_PROMPT, max_tokens=4000)
 
     # Clean up markdown if present
     if "```json" in raw:
