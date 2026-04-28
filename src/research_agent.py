@@ -109,7 +109,7 @@ def research_weekly_topics(week_number: int, save: bool = True) -> dict:
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY not set in .env")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, max_retries=3)
 
     today = datetime.now().strftime("%A, %B %d %Y")
 

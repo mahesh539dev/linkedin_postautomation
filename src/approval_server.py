@@ -11,6 +11,7 @@ import uuid
 import hmac
 import smtplib
 import threading
+import time
 import requests
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
@@ -117,6 +118,11 @@ def generate_and_store(week: int, notes: str, tuesday_start: bool):
         except Exception as e:
             print(f"Research failed ({e}), using fallback")
             research = get_fallback_topics(week)
+
+        # Wait 65 s so the research tokens clear the 1-min rate-limit window
+        # before sending the second (generation) request.
+        print("Waiting 65 s for rate-limit window to reset before generation...")
+        time.sleep(65)
 
         data = generate_posts(week, research, notes, save=True)
 

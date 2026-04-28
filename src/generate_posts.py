@@ -159,7 +159,7 @@ def generate_posts(
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY not set in .env")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, max_retries=3)
 
     research_topics = research_data.get("topics", [])
     if not research_topics:
