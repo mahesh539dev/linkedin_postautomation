@@ -24,7 +24,11 @@ app = Flask(__name__)
 
 SECRET_KEY      = os.getenv("APPROVAL_SECRET", "change-me")
 BUFFER_API_BASE = "https://api.bufferapp.com/1"
-BASE_URL        = os.getenv("BASE_URL", "http://localhost:5000")
+
+def get_base_url():
+    """Get BASE_URL from environment at runtime. On Railway, uses BASE_URL from .env.
+    Fallback to localhost:5000 only if BASE_URL not set (for local development)."""
+    return os.getenv("BASE_URL", "http://localhost:5000").rstrip('/')
 
 # In-memory store: token → {data, expires_at}
 pending_reviews = {}
@@ -61,7 +65,7 @@ def send_review_email(to_email: str, review_token: str, week: int, posts: list) 
         print("SMTP not configured — skipping email")
         return False
 
-    review_url = f"{BASE_URL}/review/{review_token}"
+    review_url = f"{get_base_url()}/review/{review_token}"
     type_icons = {"industry_news": "📰", "bridge": "🌉",
                   "industry_trend": "📈", "learning": "🎓", "opinion": "💡"}
     previews = "".join(
@@ -125,7 +129,7 @@ def generate_and_store(week: int, notes: str, tuesday_start: bool):
 
         to_email = os.getenv("NOTIFY_EMAIL", "mahesh.annapureddy5@gmail.com")
         send_review_email(to_email, token, week, data.get("posts", []))
-        print(f"Generation done. Review: {BASE_URL}/review/{token}")
+        print(f"Generation done. Review: {get_base_url()}/review/{token}")
 
     except Exception as e:
         print(f"Background generation failed: {e}")
@@ -464,7 +468,7 @@ def submit_posts():
     return jsonify({
         "success":    True,
         "token":      token,
-        "review_url": f"{BASE_URL}/review/{token}",
+        "review_url": f"{get_base_url()}/review/{token}",
         "email_sent": sent,
         "expires_at": expires_at.isoformat(),
     })
@@ -524,5 +528,5 @@ def approve_posts(token):
 if __name__ == "__main__":
     port  = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_ENV") == "development"
-    print(f"Approval server on port {port} | {BASE_URL}")
+    print(f"Approval server on port {port} | {get_base_url()}")
     app.run(host="0.0.0.0", port=port, debug=debug)

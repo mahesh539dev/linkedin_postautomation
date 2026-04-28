@@ -24,7 +24,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from src.config import (
     JOURNEY_START_DATE, WEEK_THEMES, LEARNING_QUESTIONS,
-    BASE_URL, SMTP_EMAIL, SMTP_PASSWORD, NOTIFY_EMAIL,
+    SMTP_EMAIL, SMTP_PASSWORD, NOTIFY_EMAIL,
     TUESDAY_START_THIS_WEEK
 )
 
@@ -37,6 +37,11 @@ logging.basicConfig(
     ]
 )
 log = logging.getLogger(__name__)
+
+
+def get_base_url() -> str:
+    """Get BASE_URL from environment at runtime."""
+    return os.getenv("BASE_URL", "http://localhost:5000").rstrip('/')
 
 
 def calculate_week() -> int:
@@ -65,7 +70,7 @@ def send_learning_input_email(week: int, tuesday_start: bool) -> bool:
         "What clicked or surprised you?",
         "What did you build or ship?",
     ])
-    input_url = f"{BASE_URL}/input/{week}"
+    input_url = f"{get_base_url()}/input/{week}"
     if tuesday_start:
         input_url += "?tuesday_start=true"
 
@@ -166,18 +171,18 @@ def run(week: int = None, dry_run: bool = False, tuesday_start: bool = None):
     log.info(f"Week {week}: {WEEK_THEMES.get(week, '')} | Tuesday start: {tuesday_start}")
 
     if dry_run:
-        log.info(f"[DRY RUN] Would send email. Form: {BASE_URL}/input/{week}")
+        log.info(f"[DRY RUN] Would send email. Form: {get_base_url()}/input/{week}")
         return
 
     sent = send_learning_input_email(week, tuesday_start)
 
     if sent:
         log.info("Email sent successfully")
-        log.info(f"Learning form: {BASE_URL}/input/{week}")
+        log.info(f"Learning form: {get_base_url()}/input/{week}")
         log.info("Once you submit notes, posts are generated and approval email follows.")
     else:
         log.error("Email failed — check SMTP config in .env")
-        log.info(f"You can open the form manually: {BASE_URL}/input/{week}")
+        log.info(f"You can open the form manually: {get_base_url()}/input/{week}")
 
     log.info("=" * 55)
 
