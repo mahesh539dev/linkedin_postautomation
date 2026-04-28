@@ -107,48 +107,28 @@ def send_review_email(to_email: str, review_token: str, week: int, posts: list) 
 
 # ── Background generation ─────────────────────────────────────────────────────
 
-def _call_with_retry(fn, label: str, max_attempts: int = 4):
-    """Call fn(); on 429 wait with exponential backoff and retry."""
-    wait = 65  # seconds — one full rate-limit window
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return fn()
-        except Exception as e:
-            is_429 = "429" in str(e) or "rate_limit" in str(e)
-            if is_429 and attempt < max_attempts:
-                print(f"{label} hit rate limit (attempt {attempt}/{max_attempts}). "
-                      f"Waiting {wait}s...")
-                time.sleep(wait)
-                wait *= 2  # 65 → 130 → 260
-            else:
-                raise
-
-
 def generate_and_store(week: int, notes: str, tuesday_start: bool):
     """Run research + generation then store token and email user."""
     try:
-        from src.research_agent import research_weekly_topics, get_fallback_topics
+        from src.research_agent import get_fallback_topics
         from src.generate_posts import generate_posts
 
-        # Research (web search — heaviest token consumer)
-        try:
-            research = _call_with_retry(
-                lambda: research_weekly_topics(week, save=True),
-                "Research"
-            )
-        except Exception as e:
-            print(f"Research failed ({e}), using fallback topics")
+        # Use curated fallback topics — avoids expensive web search API calls.
+        # Set USE_WEB_RESEARCH=true in Railway env to enable live search once
+        # your Anthropic account is on a paid plan with higher rate limits.
+        use_web = os.getenv("USE_WEB_RESEARCH", "false").lower() == "true"
+        if use_web:
+            from src.research_agent import research_weekly_topics
+            try:
+                research = research_weekly_topics(week, save=True)
+            except Exception as e:
+                print(f"Web research failed ({e}), falling back to curated topics")
+                research = get_fallback_topics(week)
+        else:
+            print("Using curated fallback topics (web research disabled)")
             research = get_fallback_topics(week)
 
-        # Wait one full rate-limit window before generation so research tokens clear
-        print("Waiting 65 s before generation (rate-limit window reset)...")
-        time.sleep(65)
-
-        # Generation — retry independently if it also hits the limit
-        data = _call_with_retry(
-            lambda: generate_posts(week, research, notes, save=True),
-            "Generation"
-        )
+        data = generate_posts(week, research, notes, save=True)
 
         token      = str(uuid.uuid4()).replace("-", "")[:24]
         expires_at = datetime.now() + timedelta(hours=48)
