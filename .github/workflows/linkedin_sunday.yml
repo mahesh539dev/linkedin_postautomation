@@ -16,11 +16,6 @@ on:
         required: false
         type: boolean
         default: false
-      tuesday_start:
-        description: 'Tuesday start this week (first week only)'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   linkedin-automation:
@@ -55,7 +50,6 @@ jobs:
         run: |
           WEEK_ARG=""
           DRY_RUN_ARG=""
-          TUESDAY_ARG=""
 
           if [ -n "${{ github.event.inputs.week_override }}" ]; then
             WEEK_ARG="--week ${{ github.event.inputs.week_override }}"
@@ -65,11 +59,7 @@ jobs:
             DRY_RUN_ARG="--dry-run"
           fi
 
-          if [ "${{ github.event.inputs.tuesday_start }}" = "true" ]; then
-            TUESDAY_ARG="--tuesday-start"
-          fi
-
-          python -m src.auto_run $WEEK_ARG $DRY_RUN_ARG $TUESDAY_ARG
+          python -m src.auto_run $WEEK_ARG $DRY_RUN_ARG
 
       - name: Upload run log
         uses: actions/upload-artifact@v4

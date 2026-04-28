@@ -11,7 +11,6 @@ import uuid
 import hmac
 import smtplib
 import threading
-import time
 import requests
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
@@ -27,8 +26,6 @@ SECRET_KEY      = os.getenv("APPROVAL_SECRET", "change-me")
 BUFFER_API_BASE = "https://api.bufferapp.com/1"
 
 def get_base_url():
-    """Get BASE_URL from environment at runtime. On Railway, uses BASE_URL from .env.
-    Fallback to localhost:5000 only if BASE_URL not set (for local development)."""
     return os.getenv("BASE_URL", "http://localhost:5000").rstrip('/')
 
 # In-memory store: token → {data, expires_at}
@@ -69,16 +66,30 @@ def send_review_email(to_email: str, review_token: str, week: int, posts: list) 
     review_url = f"{get_base_url()}/review/{review_token}"
     type_icons = {"industry_news": "📰", "bridge": "🌉",
                   "industry_trend": "📈", "learning": "🎓", "opinion": "💡"}
-    previews = "".join(
-        f"\n  {type_icons.get(p.get('type',''),'📌')} "
-        f"{p.get('schedule_day')} {p.get('schedule_time')} — {p.get('type','').upper()}\n"
-        f"  \"{p.get('content','')[:100]}...\"\n"
-        for p in posts
-    )
+
+    previews = ""
+    for p in posts:
+        # Use best-scored version for preview if available
+        versions = p.get("versions", [])
+        if versions:
+            best = max(versions, key=lambda v: v.get("score", 0))
+            content = best.get("content", p.get("content", ""))
+            score   = best.get("score", 0)
+            score_str = f" [{score}/100]" if score > 0 else ""
+            ver_str   = f" · {best.get('label', 'V1')}"
+        else:
+            content   = p.get("content", "")
+            score_str = ""
+            ver_str   = ""
+        previews += (
+            f"\n  {type_icons.get(p.get('type',''),'📌')} "
+            f"{p.get('schedule_day')} {p.get('schedule_time')} — {p.get('type','').upper()}{ver_str}{score_str}\n"
+            f"  \"{content[:100]}...\"\n"
+        )
 
     html = f"""<html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
 <h2 style="color:#3b82f6">LinkedIn Week {week} — Review Ready</h2>
-<p>5 posts generated. Your approval needed before they go to Buffer.</p>
+<p>{len(posts)} posts generated in 3 versions each (Kimi, Claude, OpenAI) with scores. Your approval needed before they go to Buffer.</p>
 <pre style="background:#f1f5f9;padding:16px;border-radius:8px;font-size:13px">{previews}</pre>
 <div style="text-align:center;margin:28px 0">
   <a href="{review_url}" style="background:#3b82f6;color:white;padding:14px 36px;
@@ -107,15 +118,12 @@ def send_review_email(to_email: str, review_token: str, week: int, posts: list) 
 
 # ── Background generation ─────────────────────────────────────────────────────
 
-def generate_and_store(week: int, notes: str, tuesday_start: bool):
-    """Run research + generation then store token and email user."""
+def generate_and_store(week: int, notes: str):
+    """Run research → generation → variants → store token → email user."""
     try:
         from src.research_agent import get_fallback_topics
         from src.generate_posts import generate_posts
 
-        # Use curated fallback topics — avoids expensive web search API calls.
-        # Set USE_WEB_RESEARCH=true in Railway env to enable live search once
-        # your Anthropic account is on a paid plan with higher rate limits.
         use_web = os.getenv("USE_WEB_RESEARCH", "false").lower() == "true"
         if use_web:
             from src.research_agent import research_weekly_topics
@@ -136,6 +144,12 @@ def generate_and_store(week: int, notes: str, tuesday_start: bool):
         except Exception as e:
             print(f"Refinement step failed ({e}), continuing with unrefined posts")
 
+        try:
+            from src.post_variants import create_variants
+            data["posts"] = create_variants(data["posts"])
+        except Exception as e:
+            print(f"Variant generation failed ({e}), continuing with single version")
+
         token      = str(uuid.uuid4()).replace("-", "")[:24]
         expires_at = datetime.now() + timedelta(hours=48)
         pending_reviews[token] = {
@@ -154,7 +168,7 @@ def generate_and_store(week: int, notes: str, tuesday_start: bool):
             print(f"Approval email sent to {to_email}")
         else:
             print(f"EMAIL FAILED — open this URL manually: {review_url}")
-            print(f"Check SMTP_EMAIL / SMTP_PASSWORD in Railway env vars")
+            print("Check SMTP_EMAIL / SMTP_PASSWORD in Railway env vars")
         print("=" * 60)
 
     except Exception as e:
@@ -195,25 +209,18 @@ INPUT_HTML = """<!DOCTYPE html>
   <h1>📚 Week {{ week }}: What did you learn?</h1>
   <p class="sub">{{ theme }} · {{ today }}</p>
 
-  {% if tuesday_start %}
-  <div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);
-       border-radius:8px;padding:12px 16px;margin-bottom:20px;color:#fbbf24;font-size:13px">
-    📅 <strong>This week only:</strong> Starting Tuesday — posts go Tue–Fri.
-  </div>
-  {% endif %}
-
   <div>{% for q in questions %}
     <div class="q"><p>Q{{ loop.index }}</p><span>{{ q }}</span></div>
   {% endfor %}</div>
 
   <form id="form">
-    <textarea id="notes" placeholder="Answer the questions above in any order. Be specific — numbers, tool names, what surprised you, what you built. Claude uses your exact words."></textarea>
+    <textarea id="notes" placeholder="Answer the questions above in any order. Be specific — numbers, tool names, what surprised you, what you built."></textarea>
     <button type="submit" id="btn">✍️ Generate My Posts →</button>
   </form>
 
   <div class="done" id="done">
     <h2>Generating your posts...</h2>
-    <p>Claude is researching topics + writing your 5 posts.<br>
+    <p>DeepSeek is researching topics · Kimi is writing posts · Claude + OpenAI are creating variants.<br>
        Check your email in 3–5 minutes for the approval link.</p>
   </div>
 
@@ -227,7 +234,7 @@ INPUT_HTML = """<!DOCTYPE html>
       const resp = await fetch('/input/{{ week }}', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({notes, tuesday_start: {{ 'true' if tuesday_start else 'false' }}})
+        body: JSON.stringify({notes})
       });
       const data = await resp.json();
       if (data.success) {
@@ -263,9 +270,9 @@ REVIEW_HTML = """<!DOCTYPE html>
     .header p{color:#64748b;font-size:12px;font-family:monospace;margin-top:3px}
     .badge{font-family:monospace;font-size:12px;padding:5px 14px;border-radius:20px;
            background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.3)}
-    .container{max-width:820px;margin:0 auto;padding:32px 20px}
+    .container{max-width:860px;margin:0 auto;padding:32px 20px}
     .card{background:#111827;border:1px solid #1e3a5f;border-radius:12px;
-          margin-bottom:18px;overflow:hidden;transition:border-color .2s}
+          margin-bottom:22px;overflow:hidden;transition:border-color .2s}
     .card.approved{border-color:#06d6a0}
     .card.rejected{border-color:#ef4444;opacity:.55}
     .card-head{padding:14px 18px;background:#1a2234;border-bottom:1px solid #1e3a5f;
@@ -284,14 +291,32 @@ REVIEW_HTML = """<!DOCTYPE html>
     .st-pending{background:rgba(100,116,139,.2);color:#64748b}
     .st-approved{background:rgba(6,214,160,.2);color:#06d6a0}
     .st-rejected{background:rgba(239,68,68,.2);color:#ef4444}
+    /* Version tabs */
+    .ver-tabs{display:flex;gap:3px;padding:10px 18px 0;background:#0d1a2d;
+              border-bottom:1px solid #1e3a5f;flex-wrap:wrap}
+    .ver-tab{padding:7px 14px;border-radius:8px 8px 0 0;font-size:12px;font-weight:600;
+             cursor:pointer;border:1px solid #1e3a5f;border-bottom:none;
+             background:#1a2234;color:#64748b;font-family:inherit;
+             display:inline-flex;align-items:center;gap:6px;transition:all .15s}
+    .ver-tab:hover{color:#94a3b8;background:#1e293b}
+    .ver-tab.active{background:#111827;color:#e2e8f0;border-color:#3b82f6}
+    .ver-tab.best-ver{border-color:#fbbf24 !important}
+    .vscore{font-family:monospace;font-size:11px;padding:2px 7px;border-radius:10px;
+            background:rgba(255,255,255,.08);font-weight:700}
+    .s-good{color:#06d6a0}
+    .s-ok{color:#fbbf24}
+    .s-bad{color:#ef4444}
+    .s-none{color:#64748b}
+    .breakdown-row{padding:7px 18px;background:#0d1a2d;min-height:26px;
+                   border-bottom:1px solid #1e3a5f;line-height:1.8;font-size:11px}
     .card-body{padding:18px}
     .post-title{font-size:13px;color:#94a3b8;margin-bottom:10px;font-style:italic}
-    textarea{width:100%;min-height:150px;background:rgba(0,0,0,.35);
+    textarea{width:100%;min-height:160px;background:rgba(0,0,0,.35);
              border:1px solid #1e3a5f;border-radius:8px;padding:12px 14px;
              color:#e2e8f0;font-size:14px;line-height:1.7;resize:vertical;outline:none}
     textarea:focus{border-color:#3b82f6}
     .chars{font-family:monospace;font-size:11px;color:#64748b;text-align:right;margin-top:4px}
-    .card-actions{padding:12px 18px;border-top:1px solid #1e3a5f;display:flex;gap:8px;align-items:center}
+    .card-actions{padding:12px 18px;border-top:1px solid #1e3a5f;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
     .btn{padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;
          cursor:pointer;border:none;font-family:inherit}
     .btn-a{background:#06d6a0;color:#0a1628}
@@ -333,27 +358,46 @@ REVIEW_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="instructions">
-    ⚡ Read each post · Edit directly if needed · Approve what you like · Reject the rest.
-    Only approved posts go to Buffer.
+    ⚡ Each post has 3 AI versions — tabs show scores. Best version is pre-selected.
+    Edit directly · approve the version you like · reject the rest.
   </div>
 
 {% for post in posts %}
-  <div class="card" id="card-{{ loop.index0 }}">
+{% set pi = loop.index0 %}
+  <div class="card" id="card-{{ pi }}">
     <div class="card-head">
       <span class="num">Post {{ loop.index }}</span>
       <span class="type type-{{ post.type }}">{{ post.type.replace('_',' ') }}</span>
       <span class="sched">{{ post.schedule_day }} · {{ post.schedule_time }}</span>
-      <span class="st st-pending" id="st-{{ loop.index0 }}">Pending</span>
+      <span class="st st-pending" id="st-{{ pi }}">Pending</span>
     </div>
+
+    {% if post.versions %}
+    <div class="ver-tabs" id="tabs-{{ pi }}">
+      {% for v in post.versions %}
+      {% set vi = loop.index0 %}
+      <button class="ver-tab{% if vi == 0 %} active{% endif %}"
+              id="vtab-{{ pi }}-{{ vi }}"
+              onclick="switchVer({{ pi }}, {{ vi }})">
+        {{ v.label }}
+        {% if v.score and v.score > 0 %}
+        <span class="vscore {% if v.score >= 80 %}s-good{% elif v.score >= 60 %}s-ok{% else %}s-bad{% endif %}">{{ v.score }}</span>
+        {% endif %}
+      </button>
+      {% endfor %}
+    </div>
+    <div class="breakdown-row" id="bd-{{ pi }}"></div>
+    {% endif %}
+
     <div class="card-body">
       <div class="post-title">{{ post.title }}</div>
-      <textarea id="tx-{{ loop.index0 }}" oninput="cc({{ loop.index0 }})">{{ post.content }}</textarea>
-      <div class="chars" id="ch-{{ loop.index0 }}"></div>
+      <textarea id="tx-{{ pi }}" oninput="cc({{ pi }})">{{ post.content }}</textarea>
+      <div class="chars" id="ch-{{ pi }}"></div>
     </div>
     <div class="card-actions">
-      <button class="btn btn-a" onclick="approve({{ loop.index0 }})">✓ Approve</button>
-      <button class="btn btn-r" onclick="reject({{ loop.index0 }})">✗ Reject</button>
-      <button class="btn btn-u" id="undo-{{ loop.index0 }}" onclick="undo({{ loop.index0 }})">↩ Undo</button>
+      <button class="btn btn-a" onclick="approve({{ pi }})">✓ Approve</button>
+      <button class="btn btn-r" onclick="reject({{ pi }})">✗ Reject</button>
+      <button class="btn btn-u" id="undo-{{ pi }}" onclick="undo({{ pi }})">↩ Undo</button>
       <span class="src">{{ post.source_topic or 'personal' }}</span>
     </div>
   </div>
@@ -368,69 +412,156 @@ REVIEW_HTML = """<!DOCTYPE html>
 <script>
 const N = {{ posts|length }};
 const token = "{{ token }}";
+const verData = {{ versions_js | safe }};
 const s = new Array(N).fill('pending');
+const activeVer = new Array(N).fill(0);
+const approvedVer = new Array(N).fill('V1');
+
+const BREAKDOWN_MAX = {hook:20, specificity:20, insight:20, voice:15, backend:10, engagement:10, format:5};
+const BREAKDOWN_LABEL = {hook:'Hook', specificity:'Spec', insight:'Insight', voice:'Voice', backend:'Backend', engagement:'Engage', format:'Format'};
+
+function scoreColor(score) {
+  if (!score || score <= 0) return '#64748b';
+  if (score >= 80) return '#06d6a0';
+  if (score >= 60) return '#fbbf24';
+  return '#ef4444';
+}
+
+function updateBreakdown(pi, vi) {
+  const el = document.getElementById('bd-' + pi);
+  if (!el) return;
+  const ver = verData[pi] && verData[pi][vi];
+  if (!ver || !ver.breakdown || !Object.keys(ver.breakdown).length) {
+    el.innerHTML = '';
+    return;
+  }
+  const parts = Object.entries(ver.breakdown).map(([k, val]) => {
+    const max = BREAKDOWN_MAX[k] || 10;
+    const color = scoreColor(Math.round((val / max) * 100));
+    return `<span style="color:${color}">${BREAKDOWN_LABEL[k]||k}:${val}/${max}</span>`;
+  });
+  el.innerHTML = parts.join('<span style="color:#1e3a5f"> · </span>');
+}
+
+function switchVer(pi, vi) {
+  const versions = verData[pi];
+  if (!versions || !versions[vi]) return;
+  activeVer[pi] = vi;
+  approvedVer[pi] = versions[vi].label || ('V' + (vi + 1));
+  document.getElementById('tx-' + pi).value = versions[vi].content;
+  cc(pi);
+  const tabsEl = document.getElementById('tabs-' + pi);
+  if (tabsEl) {
+    tabsEl.querySelectorAll('.ver-tab').forEach((tab, j) => {
+      tab.classList.toggle('active', j === vi);
+    });
+  }
+  updateBreakdown(pi, vi);
+}
 
 function cc(i) {
-  const l = document.getElementById('tx-'+i).value.length;
-  document.getElementById('ch-'+i).textContent = l + ' chars';
+  const l = document.getElementById('tx-' + i).value.length;
+  document.getElementById('ch-' + i).textContent = l + ' chars';
 }
+
 function badge() {
-  const a = s.filter(x=>x==='approved').length;
-  document.getElementById('cnt').textContent = a+' / '+N+' approved';
+  const a = s.filter(x => x === 'approved').length;
+  document.getElementById('cnt').textContent = a + ' / ' + N + ' approved';
   document.getElementById('info').textContent =
-    a===0 ? 'Approve posts above, then submit' : a+' post'+(a>1?'s':'')+' ready to schedule';
+    a === 0 ? 'Approve posts above, then submit' : a + ' post' + (a > 1 ? 's' : '') + ' ready to schedule';
 }
+
 function approve(i) {
-  s[i]='approved';
-  document.getElementById('card-'+i).className='card approved';
-  const st=document.getElementById('st-'+i);
-  st.className='st st-approved'; st.textContent='✓ Approved';
-  document.getElementById('undo-'+i).style.display='inline-block';
+  const verLabel = verData[i] && verData[i][activeVer[i]] ? verData[i][activeVer[i]].label : 'V1';
+  approvedVer[i] = verLabel;
+  s[i] = 'approved';
+  document.getElementById('card-' + i).className = 'card approved';
+  const st = document.getElementById('st-' + i);
+  st.className = 'st st-approved';
+  st.textContent = '✓ ' + verLabel;
+  document.getElementById('undo-' + i).style.display = 'inline-block';
   badge();
 }
+
 function reject(i) {
-  s[i]='rejected';
-  document.getElementById('card-'+i).className='card rejected';
-  const st=document.getElementById('st-'+i);
-  st.className='st st-rejected'; st.textContent='✗ Rejected';
-  document.getElementById('undo-'+i).style.display='inline-block';
+  s[i] = 'rejected';
+  document.getElementById('card-' + i).className = 'card rejected';
+  const st = document.getElementById('st-' + i);
+  st.className = 'st st-rejected';
+  st.textContent = '✗ Rejected';
+  document.getElementById('undo-' + i).style.display = 'inline-block';
   badge();
 }
+
 function undo(i) {
-  s[i]='pending';
-  document.getElementById('card-'+i).className='card';
-  const st=document.getElementById('st-'+i);
-  st.className='st st-pending'; st.textContent='Pending';
-  document.getElementById('undo-'+i).style.display='none';
+  s[i] = 'pending';
+  document.getElementById('card-' + i).className = 'card';
+  const st = document.getElementById('st-' + i);
+  st.className = 'st st-pending';
+  st.textContent = 'Pending';
+  document.getElementById('undo-' + i).style.display = 'none';
   badge();
 }
+
 async function submitAll() {
-  const approved = s.map((v,i)=>v==='approved'?i:-1).filter(i=>i>=0);
+  const approved = s.map((v, i) => v === 'approved' ? i : -1).filter(i => i >= 0);
   if (!approved.length) { alert('Approve at least one post first.'); return; }
   const btn = document.querySelector('.submit-btn');
-  btn.textContent = 'Sending to Buffer...'; btn.disabled = true;
-  const payload = approved.map(i=>({index:i, content:document.getElementById('tx-'+i).value}));
+  btn.textContent = 'Sending to Buffer...';
+  btn.disabled = true;
+  const payload = approved.map(i => ({
+    index: i,
+    content: document.getElementById('tx-' + i).value,
+    version_label: approvedVer[i] || 'V1'
+  }));
   try {
-    const r = await fetch('/approve/'+token, {
-      method:'POST', headers:{'Content-Type':'application/json'},
+    const r = await fetch('/approve/' + token, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({approved_posts: payload})
     });
     const d = await r.json();
     if (d.success) {
-      document.getElementById('success').style.display='block';
-      document.getElementById('success').scrollIntoView({behavior:'smooth'});
-      btn.textContent = '✅ '+d.scheduled+' posts scheduled!';
+      document.getElementById('success').style.display = 'block';
+      document.getElementById('success').scrollIntoView({behavior: 'smooth'});
+      btn.textContent = '✅ ' + d.scheduled + ' posts scheduled!';
       btn.style.background = '#06d6a0';
     } else {
-      btn.textContent='Error — try again'; btn.disabled=false;
-      alert('Error: '+(d.error||'unknown'));
+      btn.textContent = 'Error — try again';
+      btn.disabled = false;
+      alert('Error: ' + (d.error || 'unknown'));
     }
   } catch(e) {
-    btn.textContent='Error — try again'; btn.disabled=false;
-    alert('Network error: '+e.message);
+    btn.textContent = 'Error — try again';
+    btn.disabled = false;
+    alert('Network error: ' + e.message);
   }
 }
-for(let i=0;i<N;i++) cc(i);
+
+// Mark best-scoring tab with gold border
+function markBestTab(pi) {
+  const versions = verData[pi];
+  if (!versions || versions.length < 2) return;
+  let best = 0;
+  for (let j = 1; j < versions.length; j++) {
+    if ((versions[j].score || 0) > (versions[best].score || 0)) best = j;
+  }
+  const tab = document.getElementById('vtab-' + pi + '-' + best);
+  if (tab) tab.classList.add('best-ver');
+  return best;
+}
+
+// Initialize: switch each post to its best-scoring version
+for (let i = 0; i < N; i++) {
+  cc(i);
+  if (!verData[i] || verData[i].length === 0) continue;
+  const best = markBestTab(i);
+  if (best > 0) {
+    switchVer(i, best);
+  } else {
+    updateBreakdown(i, 0);
+  }
+}
 </script>
 </body>
 </html>"""
@@ -449,17 +580,15 @@ def list_reviews():
     secret = request.args.get("secret", "")
     if not hmac.compare_digest(secret, SECRET_KEY):
         return jsonify({"error": "Pass ?secret=YOUR_APPROVAL_SECRET"}), 401
-    now = datetime.now()
     items = []
     for token, stored in pending_reviews.items():
-        data       = stored["data"]
-        expires_at = stored.get("expires_at", "")
+        data = stored["data"]
         items.append({
             "week":       data.get("week"),
             "theme":      data.get("week_theme", ""),
             "posts":      len(data.get("posts", [])),
             "review_url": f"{get_base_url()}/review/{token}",
-            "expires_at": expires_at,
+            "expires_at": stored.get("expires_at", ""),
         })
     return jsonify({"pending": len(items), "reviews": items})
 
@@ -467,7 +596,6 @@ def list_reviews():
 @app.route("/input/<int:week>", methods=["GET"])
 def input_form(week):
     from src.config import WEEK_THEMES, LEARNING_QUESTIONS
-    tuesday_start = request.args.get("tuesday_start", "false").lower() == "true"
     theme     = WEEK_THEMES.get(week, f"Week {week}")
     questions = LEARNING_QUESTIONS.get(week, [
         "What did you learn this week?",
@@ -477,19 +605,17 @@ def input_form(week):
     today = datetime.now().strftime("%A, %B %d")
     return render_template_string(
         INPUT_HTML,
-        week=week, theme=theme, questions=questions,
-        today=today, tuesday_start=tuesday_start
+        week=week, theme=theme, questions=questions, today=today,
     )
 
 
 @app.route("/input/<int:week>", methods=["POST"])
 def input_submit(week):
-    body          = request.get_json()
-    notes         = (body or {}).get("notes", "").strip()
-    tuesday_start = (body or {}).get("tuesday_start", False)
+    body  = request.get_json()
+    notes = (body or {}).get("notes", "").strip()
     if not notes:
         return jsonify({"error": "No notes provided"}), 400
-    t = threading.Thread(target=generate_and_store, args=(week, notes, tuesday_start), daemon=True)
+    t = threading.Thread(target=generate_and_store, args=(week, notes), daemon=True)
     t.start()
     return jsonify({"success": True, "message": "Generating posts — check email in 3-5 min"})
 
@@ -527,13 +653,16 @@ def review_page(token):
         return "<h2 style='font-family:sans-serif;padding:40px'>Link expired or invalid.</h2>", 404
     stored = pending_reviews[token]
     data   = stored["data"]
+    posts  = data.get("posts", [])
+    versions_js = json.dumps([post.get("versions", []) for post in posts])
     return render_template_string(
         REVIEW_HTML,
-        posts        = data.get("posts", []),
+        posts        = posts,
         week         = data.get("week", "?"),
         theme        = data.get("week_theme", "AI Infrastructure"),
         generated_at = data.get("generated_at", "")[:10],
         token        = token,
+        versions_js  = versions_js,
     )
 
 
@@ -541,8 +670,8 @@ def review_page(token):
 def approve_posts(token):
     if token not in pending_reviews:
         return jsonify({"error": "Link expired or invalid"}), 404
-    body       = request.get_json()
-    approved   = body.get("approved_posts", [])
+    body     = request.get_json()
+    approved = body.get("approved_posts", [])
     if not approved:
         return jsonify({"error": "No posts approved"}), 400
 
@@ -550,8 +679,9 @@ def approve_posts(token):
     scheduled, errors = 0, []
 
     for item in approved:
-        idx     = item["index"]
-        content = item["content"]
+        idx           = item["index"]
+        content       = item["content"]
+        version_label = item.get("version_label", "V1")
         if idx >= len(all_posts):
             continue
         sdt = all_posts[idx].get("scheduled_datetime", "")
@@ -561,6 +691,7 @@ def approve_posts(token):
         result = schedule_to_buffer(content, sdt)
         if result["success"]:
             scheduled += 1
+            print(f"  Scheduled post {idx+1} ({version_label}): {sdt}")
         else:
             errors.append(f"Post {idx+1}: {result.get('error','unknown')}")
 

@@ -9,7 +9,6 @@ Generates 5 LinkedIn posts per week mixing:
 This gives you industry reach + personal credibility.
 """
 
-import anthropic
 import json
 import os
 from datetime import datetime, timedelta
@@ -74,6 +73,24 @@ HASHTAG_SETS = {
     "opinion":        ["#AIInfrastructure", "#MLOps", "#TechOpinion", "#BackendEngineering", "#AI"],
 }
 
+_DAY_INSTRUCTIONS = {
+    "Monday":    "Pick the most timely research topic. Write a sharp take, not just a summary. Your backend angle must be in the post.",
+    "Tuesday":   "Use YOUR expertise (Kafka/Spring Boot/K8s). Find one specific mapping from your backend world to an AI concept. Make it concrete.",
+    "Wednesday": "Pick a different research topic. Zoom out — what does this mean for the industry in 6-12 months? What should engineers do?",
+    "Thursday":  "Use the personal learning notes. One specific thing that clicked or surprised you. Show the learning curve honestly.",
+    "Friday":    "Bold, polarising take based on research or your experience. Start with the opinion, then back it up. Not aggressive — just confident.",
+}
+
+
+def get_dynamic_schedule() -> list[tuple]:
+    """Return POST_SCHEDULE entries for remaining weekdays starting from tomorrow.
+    If today is Fri/Sat/Sun, returns the full Mon-Fri schedule for next week."""
+    today = datetime.now()
+    wd = today.weekday()  # 0=Mon, 6=Sun
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    remaining = set(day_names[wd + 1:]) if wd <= 3 else set(day_names)
+    return [entry for entry in POST_SCHEDULE if entry[0] in remaining]
+
 
 def build_generation_prompt(
     week_number: int,
@@ -82,7 +99,6 @@ def build_generation_prompt(
     schedule: list[tuple]
 ) -> str:
 
-    # Format research topics for the prompt
     topics_text = ""
     for t in research_topics[:5]:
         topics_text += f"""
@@ -94,8 +110,14 @@ Topic #{t['rank']}: {t['headline']}
   Suggested type: {t['suggested_post_type']}
 """
 
+    instructions = "\n".join(
+        f"- {day} ({type_}): {_DAY_INSTRUCTIONS.get(day, desc)}"
+        for day, time, type_, desc in schedule
+    )
+
+    n = len(schedule)
     return f"""
-Week {week_number} — Generate 5 LinkedIn posts.
+Week {week_number} — Generate {n} LinkedIn post{'s' if n != 1 else ''}.
 
 ENGINEER PROFILE:
 {ENGINEER_CONTEXT}
@@ -110,20 +132,7 @@ POST SCHEDULE TO FILL:
 {chr(10).join(f"  {day} {time}: {type_} — {desc}" for day, time, type_, desc in schedule)}
 
 INSTRUCTIONS:
-- Monday (industry_news): Pick the most timely research topic. Write a sharp take,
-  not just a summary. Your backend angle must be in the post.
-
-- Tuesday (bridge): Use YOUR expertise (Kafka/Spring Boot/K8s). Find one specific
-  mapping from your backend world to an AI concept. Make it concrete.
-
-- Wednesday (industry_trend): Pick a different research topic. Zoom out — what does
-  this mean for the industry in 6-12 months? What should engineers do?
-
-- Thursday (learning): Use the personal learning notes. One specific thing that
-  clicked or surprised you. Show the learning curve honestly.
-
-- Friday (opinion): Bold, polarising take based on research or your experience.
-  Start with the opinion, then back it up. Not aggressive — just confident.
+{instructions}
 
 Return ONLY valid JSON (no markdown):
 {{
@@ -161,14 +170,16 @@ def generate_posts(
     if not research_topics:
         raise ValueError("No research topics found — run research_agent.py first")
 
-    print(f"\n✍️  Generating 5 posts for Week {week_number}...")
+    schedule = get_dynamic_schedule()
+    print(f"\n✍️  Generating {len(schedule)} posts for Week {week_number}...")
+    print(f"   Days: {', '.join(d for d, *_ in schedule)}")
     print(f"   Using {len(research_topics)} research topics + your learning notes")
 
     prompt = build_generation_prompt(
         week_number,
         research_topics,
         learning_notes,
-        POST_SCHEDULE
+        schedule,
     )
 
     raw = call_llm("kimi", prompt, system=SYSTEM_PROMPT, max_tokens=4000)
@@ -187,15 +198,22 @@ def generate_posts(
         print("Raw:", raw[:500])
         raise
 
-    # Add scheduled dates + append hashtags
+    # Add scheduled dates: remaining weekdays starting from tomorrow (or next Monday if Fri/Sat/Sun)
     today = datetime.now()
-    days_to_monday = (7 - today.weekday()) % 7 or 7
-    next_monday = today + timedelta(days=days_to_monday)
-    day_offsets = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4}
+    wd = today.weekday()
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    if wd <= 3:
+        remaining = day_names[wd + 1:]
+        base_date = today + timedelta(days=1)
+    else:
+        remaining = day_names
+        base_date = today + timedelta(days=(7 - wd) % 7 or 7)
+    day_offsets = {day: i for i, day in enumerate(remaining)}
 
     for post in data.get("posts", []):
-        offset = day_offsets.get(post.get("schedule_day", "Monday"), 0)
-        scheduled_date = next_monday + timedelta(days=offset)
+        day = post.get("schedule_day", "")
+        offset = day_offsets.get(day, 0)
+        scheduled_date = base_date + timedelta(days=offset)
         post["scheduled_datetime"] = f"{scheduled_date.strftime('%Y-%m-%d')} {post.get('schedule_time', '10:00')}:00"
 
         # Append hashtags if not already in content

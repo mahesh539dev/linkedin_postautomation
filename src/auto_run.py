@@ -9,9 +9,10 @@ Flow:
   2. Send Email 1: "What did you learn this week?" with form link
   3. Mahesh fills form (3-5 min)
   4. approval_server receives notes, triggers Steps 2-3 in background:
-     - Claude researches trending topics
-     - Claude generates posts from notes + research
-     - Sends Email 2: approval link with review UI
+     - DeepSeek ranks trending topics
+     - Kimi generates posts from notes + research
+     - Claude Haiku refines, Claude Sonnet + GPT-4o create variants + scores
+     - Sends Email 2: approval link with 3-version review UI
 """
 
 import os
@@ -25,7 +26,6 @@ from email.mime.multipart import MIMEMultipart
 from src.config import (
     JOURNEY_START_DATE, WEEK_THEMES, LEARNING_QUESTIONS,
     SMTP_EMAIL, SMTP_PASSWORD, NOTIFY_EMAIL,
-    TUESDAY_START_THIS_WEEK
 )
 
 logging.basicConfig(
@@ -40,12 +40,10 @@ log = logging.getLogger(__name__)
 
 
 def get_base_url() -> str:
-    """Get BASE_URL from environment at runtime."""
     return os.getenv("BASE_URL", "http://localhost:5000").rstrip('/')
 
 
 def calculate_week() -> int:
-    """Auto-detect current week from journey start date."""
     try:
         start = date.fromisoformat(JOURNEY_START_DATE)
     except ValueError:
@@ -54,12 +52,8 @@ def calculate_week() -> int:
     return max(2, min(9, (elapsed // 7) + 1))
 
 
-def send_learning_input_email(week: int, tuesday_start: bool) -> bool:
-    """
-    Send Email 1: What did you learn this week?
-    Contains a link to the learning input form on the approval server.
-    Mahesh fills the form, approval_server handles the rest.
-    """
+def send_learning_input_email(week: int) -> bool:
+    """Send Email 1: What did you learn this week? Contains the form link."""
     if not SMTP_EMAIL or not SMTP_PASSWORD:
         log.warning("SMTP not configured — cannot send learning email")
         return False
@@ -71,8 +65,6 @@ def send_learning_input_email(week: int, tuesday_start: bool) -> bool:
         "What did you build or ship?",
     ])
     input_url = f"{get_base_url()}/input/{week}"
-    if tuesday_start:
-        input_url += "?tuesday_start=true"
 
     questions_html = "".join(
         f'<div style="background:#1e293b;border-left:3px solid #3b82f6;'
@@ -81,16 +73,6 @@ def send_learning_input_email(week: int, tuesday_start: bool) -> bool:
         f'<p style="color:#e2e8f0;font-size:14px;margin:0">{q}</p></div>'
         for i, q in enumerate(questions, 1)
     )
-
-    tuesday_banner = ""
-    if tuesday_start:
-        tuesday_banner = (
-            '<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);'
-            'border-radius:8px;padding:14px;margin-bottom:20px;">'
-            '<p style="color:#fbbf24;font-size:13px;margin:0">'
-            '📅 <strong>This week only:</strong> Starting from Tuesday. '
-            'Posts go Tue-Fri this week, then Mon-Fri every week after.</p></div>'
-        )
 
     html = f"""
 <html><body style="font-family:-apple-system,sans-serif;max-width:600px;
@@ -105,8 +87,6 @@ border-radius:12px;margin-bottom:20px;border:1px solid #1e3a5f;">
     {theme} · {datetime.now().strftime('%A, %B %d')}
   </p>
 </div>
-
-{tuesday_banner}
 
 <p style="color:#94a3b8;font-size:14px;line-height:1.7;margin-bottom:20px;">
   Before generating your LinkedIn posts, share what you learned this week.
@@ -128,9 +108,10 @@ border-radius:12px;margin-bottom:20px;border:1px solid #1e3a5f;">
 
 <p style="color:#475569;font-size:12px;line-height:1.6;">
   After you submit:<br>
-  1. Claude researches trending AI/MLOps/Kafka topics<br>
-  2. Generates posts from your notes + research<br>
-  3. Emails you an approval link (3-5 minutes)
+  1. DeepSeek ranks trending AI/infra topics<br>
+  2. Kimi generates posts from your notes + research<br>
+  3. Claude Sonnet + GPT-4o create 3 versions + scores per post<br>
+  4. Emails you an approval link (3-5 minutes)
 </p>
 
 <p style="color:#334155;font-size:12px;border-top:1px solid #1e293b;
@@ -157,7 +138,7 @@ padding-top:14px;margin-top:16px;">
         return False
 
 
-def run(week: int = None, dry_run: bool = False, tuesday_start: bool = None):
+def run(week: int = None, dry_run: bool = False):
     log.info("=" * 55)
     log.info("STEP 1: SEND LEARNING INPUT EMAIL")
     log.info(datetime.now().strftime("%A %B %d %Y %I:%M %p"))
@@ -165,24 +146,22 @@ def run(week: int = None, dry_run: bool = False, tuesday_start: bool = None):
 
     if week is None:
         week = calculate_week()
-    if tuesday_start is None:
-        tuesday_start = TUESDAY_START_THIS_WEEK
 
-    log.info(f"Week {week}: {WEEK_THEMES.get(week, '')} | Tuesday start: {tuesday_start}")
+    log.info(f"Week {week}: {WEEK_THEMES.get(week, '')}")
 
     if dry_run:
         log.info(f"[DRY RUN] Would send email. Form: {get_base_url()}/input/{week}")
         return
 
-    sent = send_learning_input_email(week, tuesday_start)
+    sent = send_learning_input_email(week)
 
     if sent:
         log.info("Email sent successfully")
         log.info(f"Learning form: {get_base_url()}/input/{week}")
         log.info("Once you submit notes, posts are generated and approval email follows.")
     else:
-        log.error("Email failed — check SMTP config in .env")
-        log.info(f"You can open the form manually: {get_base_url()}/input/{week}")
+        log.error("Email failed — check SMTP_EMAIL / SMTP_PASSWORD in Railway env vars")
+        log.info(f"Open the form manually: {get_base_url()}/input/{week}")
 
     log.info("=" * 55)
 
@@ -191,6 +170,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Send learning input email")
     parser.add_argument("--week", type=int)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--tuesday-start", action="store_true")
     args = parser.parse_args()
-    run(args.week, args.dry_run, args.tuesday_start or None)
+    run(args.week, args.dry_run)

@@ -13,7 +13,6 @@ NOTIFY_EMAIL        = os.getenv("NOTIFY_EMAIL", "mahesh.annapureddy5@gmail.com")
 BASE_URL            = os.getenv("BASE_URL", "http://localhost:5000")
 PORT                = int(os.getenv("PORT", 5000))
 JOURNEY_START_DATE  = os.getenv("JOURNEY_START_DATE", "2025-01-06")
-TUESDAY_START_THIS_WEEK = os.getenv("TUESDAY_START_THIS_WEEK", "false").lower() == "true"
 CLAUDE_MODEL        = "claude-sonnet-4-20250514"
 BUFFER_API_BASE     = "https://api.bufferapp.com/1"
 
@@ -22,7 +21,10 @@ SERPAPI_KEY         = os.getenv("SERPAPI_KEY", "")
 DEEPSEEK_MODEL      = "deepseek/deepseek-chat"
 KIMI_MODEL          = "moonshotai/moonshot-v1-8k"
 MINIMAX_MODEL       = "minimax/minimax-01"
-CLAUDE_REFINE_MODEL = "claude-haiku-4-5-20251001"
+CLAUDE_REFINE_MODEL  = "claude-haiku-4-5-20251001"
+CLAUDE_REWRITE_MODEL = "claude-sonnet-4-20250514"
+OPENAI_API_KEY       = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL         = "gpt-4o"
 
 ENGINEER_CONTEXT = """
 Name: Mahesh Annapureddy
@@ -54,12 +56,6 @@ FULL_SCHEDULE = [
     ("Friday",    "10:00", "opinion",        "Bold hot take — polarising and memorable"),
 ]
 
-TUESDAY_START_SCHEDULE = [
-    ("Tuesday",   "17:00", "bridge",         "Backend to AI concept analogy from your expertise"),
-    ("Wednesday", "10:00", "industry_trend", "Broader AI infrastructure trend or tool update"),
-    ("Thursday",  "17:00", "learning",       "What YOU learned or built this week"),
-    ("Friday",    "10:00", "opinion",        "Bold hot take — polarising and memorable"),
-]
 
 LEARNING_QUESTIONS = {
     2: ["What Python concept surprised you most coming from Java?",
