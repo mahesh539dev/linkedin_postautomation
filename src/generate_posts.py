@@ -219,6 +219,37 @@ def generate_posts(
         print("Raw:", raw[:500])
         raise
 
+    # Correct schedule_day / schedule_time regardless of what the LLM wrote.
+    # Kimi often assigns multiple posts to the same day or uses wrong day names.
+    # Strategy: match each post to a schedule slot by type; fill remaining slots
+    # by position for any post whose type didn't appear in the schedule.
+    slot_by_type = {stype: (day, t) for day, t, stype, _ in schedule}
+    matched, unmatched, used_types = [], [], set()
+
+    for post in data.get("posts", []):
+        ptype = post.get("type", "")
+        if ptype in slot_by_type and ptype not in used_types:
+            post["schedule_day"]  = slot_by_type[ptype][0]
+            post["schedule_time"] = slot_by_type[ptype][1]
+            used_types.add(ptype)
+            matched.append(post)
+        else:
+            unmatched.append(post)
+
+    # Fill unfilled schedule slots from leftover posts (type mismatch)
+    for day, t, stype, _ in schedule:
+        if stype not in used_types and unmatched:
+            post = unmatched.pop(0)
+            post["schedule_day"]  = day
+            post["schedule_time"] = t
+            post["type"]          = stype
+            used_types.add(stype)
+            matched.append(post)
+
+    data["posts"] = matched[:len(schedule)]
+    print(f"   Posts after normalisation: {len(data['posts'])} "
+          f"({', '.join(p['schedule_day'] for p in data['posts'])})")
+
     # Assign actual calendar dates to each post's schedule_day.
     # Mirrors get_dynamic_schedule: always starts from the next post day.
     today = datetime.now()
