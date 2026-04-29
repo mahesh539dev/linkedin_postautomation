@@ -40,9 +40,10 @@ Three modes:
 1. INDUSTRY post (industry_news, industry_trend): React to real news/trends.
    Add the unique backend engineer perspective. Make it useful for anyone in AI/MLOps space.
 
-2. GROWTH post (bridge, growth, opinion): Teach something actionable. Bridge posts connect
-   backend experience to AI. Growth posts share a specific tool/resource/tactic the audience
-   can use today. Opinion posts make a bold, backed-up claim.
+2. ANALYSIS post (bridge, model_comparison, opinion): Bridge posts connect backend experience
+   to AI. Model comparison posts compare 2-3 trending models on hard metrics — latency, cost,
+   context window, deployment complexity — and give a clear infrastructure verdict.
+   Opinion posts make a bold, backed-up claim.
 
 3. LEARNING post: Authentic first-person Saturday reflection. Show real thinking
    from this week — specific tools used, what broke, genuine breakthroughs.
@@ -65,7 +66,7 @@ POST_SCHEDULE = [
     ("Monday",    "10:00", "industry_news",    "Biggest AI/infra news of the week — your sharp take"),
     ("Tuesday",   "17:00", "bridge",           "Timeless backend→AI concept analogy (your expertise)"),
     ("Wednesday", "10:00", "industry_trend",   "Broader trend in AI infra — tools, patterns, companies"),
-    ("Thursday",  "17:00", "growth",           "Curated tool, resource, or tactic your audience can act on immediately"),
+    ("Thursday",  "17:00", "model_comparison",  "Compare 2-3 currently trending models on hard infra metrics — give a verdict"),
     ("Friday",    "10:00", "opinion",          "Hot take or quick tip — polarising, memorable, useful"),
     ("Saturday",  "10:00", "learning",         "Weekly learning checkpoint — what you studied, built, or discovered"),
 ]
@@ -77,7 +78,7 @@ HASHTAG_SETS = {
     "industry_news":  ["#AIInfrastructure", "#MLOps", "#LLMs", "#AI", "#MachineLearning"],
     "bridge":         ["#Kafka", "#BackendToAI", "#SystemDesign", "#AIInfrastructure", "#DistributedSystems"],
     "industry_trend": ["#MLOps", "#AIInfrastructure", "#RAG", "#LLMs", "#VectorDB"],
-    "growth":         ["#AIInfrastructure", "#MLOps", "#LearnAI", "#BackendToAI", "#AITools"],
+    "model_comparison": ["#LLMs", "#AIInfrastructure", "#ModelBenchmark", "#MLOps", "#AI"],
     "learning":       ["#100DaysOfAI", "#LearningInPublic", "#BackendToAI", "#Python", "#AIInfrastructure"],
     "opinion":        ["#AIInfrastructure", "#MLOps", "#TechOpinion", "#BackendEngineering", "#AI"],
 }
@@ -86,7 +87,7 @@ _DAY_INSTRUCTIONS = {
     "Monday":    "Pick the most timely research topic. Write a sharp take, not just a summary. Your backend angle must be in the post.",
     "Tuesday":   "Use YOUR expertise (Kafka/Spring Boot/K8s). Find one specific mapping from your backend world to an AI concept. Make it concrete.",
     "Wednesday": "Pick a different research topic. Zoom out — what does this mean for the industry in 6-12 months? What should engineers do?",
-    "Thursday":  "Share a specific tool, resource, benchmark, or workflow that your audience can act on today. What it is, why AI infra engineers should care, and one concrete thing to try.",
+    "Thursday":  "From the research topics, pick the most relevant model comparison or benchmark. Compare 2-3 trending models on hard infra metrics: latency (tok/s), cost per million tokens, context window, quantization options, deployment complexity. Give a clear verdict — which one you'd choose for production and why. Numbers beat adjectives.",
     "Friday":    "Bold, polarising take based on research or your experience. Start with the opinion, then back it up. Not aggressive — just confident.",
     "Saturday":  "Use the personal learning notes. One specific insight, confusion, or breakthrough from this week. Honest and concrete — show the learning curve.",
 }
@@ -162,7 +163,7 @@ Return ONLY valid JSON (no markdown):
   "posts": [
     {{
       "title": "short internal title",
-      "type": "industry_news|bridge|industry_trend|growth|opinion|learning",
+      "type": "industry_news|bridge|industry_trend|model_comparison|opinion|learning",
       "schedule_day": "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday",
       "schedule_time": "10:00|17:00",
       "content": "full post text here — no hashtags in body",
@@ -262,7 +263,7 @@ def preview_posts(data: dict):
         "industry_news":  "📰",
         "bridge":         "🌉",
         "industry_trend": "📈",
-        "growth":         "🌱",
+        "model_comparison": "⚖️",
         "learning":       "🎓",
         "opinion":        "💡",
     }
