@@ -1,4 +1,4 @@
-# LinkedIn Post Automation
+# LinkedIn Post Automation 
 
 Automated LinkedIn content pipeline for Mahesh Annapureddy's AI Infrastructure Engineer transition. Every week it turns raw learning notes into 5 scored, reviewed, and scheduled LinkedIn posts — with a full multi-model AI pipeline and zero manual scheduling.
 
