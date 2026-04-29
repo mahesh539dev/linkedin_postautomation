@@ -9,14 +9,12 @@ import os
 import json
 import uuid
 import hmac
-import smtplib
 import threading
 import requests
 from datetime import datetime, timedelta
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from flask import Flask, request, jsonify, render_template_string, redirect
 from dotenv import load_dotenv
+from src.email_utils import send_email
 
 load_dotenv()
 
@@ -57,24 +55,17 @@ def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
 # ── Email ─────────────────────────────────────────────────────────────────────
 
 def send_review_email(to_email: str, review_token: str, week: int, posts: list) -> bool:
-    smtp_email    = os.getenv("SMTP_EMAIL")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    if not smtp_email or not smtp_password:
-        print("SMTP not configured — skipping email")
-        return False
-
     review_url = f"{get_base_url()}/review/{review_token}"
     type_icons = {"industry_news": "📰", "bridge": "🌉",
                   "industry_trend": "📈", "learning": "🎓", "opinion": "💡"}
 
     previews = ""
     for p in posts:
-        # Use best-scored version for preview if available
         versions = p.get("versions", [])
         if versions:
             best = max(versions, key=lambda v: v.get("score", 0))
-            content = best.get("content", p.get("content", ""))
-            score   = best.get("score", 0)
+            content   = best.get("content", p.get("content", ""))
+            score     = best.get("score", 0)
             score_str = f" [{score}/100]" if score > 0 else ""
             ver_str   = f" · {best.get('label', 'V1')}"
         else:
@@ -100,20 +91,7 @@ def send_review_email(to_email: str, review_token: str, week: int, posts: list) 
 <p style="color:#64748b;font-size:12px">Link expires in 48 hours.</p>
 </body></html>"""
 
-    msg = MIMEMultipart("alternative")
-    msg["From"]    = smtp_email
-    msg["To"]      = to_email
-    msg["Subject"] = f"✍️ LinkedIn Week {week}: posts ready for review"
-    msg.attach(MIMEText(html, "html"))
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-            s.login(smtp_email, smtp_password)
-            s.send_message(msg)
-        print(f"Review email sent to {to_email}")
-        return True
-    except Exception as e:
-        print(f"Email failed: {e}")
-        return False
+    return send_email(to_email, f"✍️ LinkedIn Week {week}: posts ready for review", html)
 
 
 # ── Background generation ─────────────────────────────────────────────────────
@@ -168,7 +146,7 @@ def generate_and_store(week: int, notes: str):
             print(f"Approval email sent to {to_email}")
         else:
             print(f"EMAIL FAILED — open this URL manually: {review_url}")
-            print("Check SMTP_EMAIL / SMTP_PASSWORD in Railway env vars")
+            print("Check RESEND_API_KEY (Railway) or SMTP_EMAIL/SMTP_PASSWORD")
         print("=" * 60)
 
     except Exception as e:
@@ -679,26 +657,38 @@ def approve_posts(token):
     scheduled, errors = 0, []
 
     for item in approved:
-        idx           = item["index"]
-        content       = item["content"]
-        version_label = item.get("version_label", "V1")
-        if idx >= len(all_posts):
-            continue
-        sdt = all_posts[idx].get("scheduled_datetime", "")
-        if not sdt:
-            errors.append(f"Post {idx+1}: no scheduled_datetime")
-            continue
-        result = schedule_to_buffer(content, sdt)
-        if result["success"]:
-            scheduled += 1
-            print(f"  Scheduled post {idx+1} ({version_label}): {sdt}")
-        else:
-            errors.append(f"Post {idx+1}: {result.get('error','unknown')}")
+        try:
+            idx           = item["index"]
+            content       = item["content"]
+            version_label = item.get("version_label", "V1")
+            if idx >= len(all_posts):
+                continue
+            sdt = all_posts[idx].get("scheduled_datetime", "")
+            if not sdt:
+                errors.append(f"Post {idx+1}: no scheduled_datetime")
+                continue
+            result = schedule_to_buffer(content, sdt)
+            if result["success"]:
+                scheduled += 1
+                print(f"  Scheduled post {idx+1} ({version_label}): {sdt}")
+            else:
+                err = result.get("error", "Buffer API error")
+                errors.append(f"Post {idx+1}: {err}")
+                print(f"  Buffer error for post {idx+1}: {err}")
+        except Exception as e:
+            errors.append(f"Post {idx+1}: {e}")
+            print(f"  Unexpected error for post {idx+1}: {e}")
 
     if scheduled > 0:
         del pending_reviews[token]
 
-    return jsonify({"success": scheduled > 0, "scheduled": scheduled, "errors": errors})
+    error_summary = "; ".join(errors) if errors else None
+    return jsonify({
+        "success":   scheduled > 0,
+        "scheduled": scheduled,
+        "errors":    errors,
+        "error":     error_summary,
+    })
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

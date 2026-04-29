@@ -19,14 +19,12 @@ import os
 import sys
 import logging
 import argparse
-import smtplib
 from datetime import datetime, date
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from src.config import (
     JOURNEY_START_DATE, WEEK_THEMES, LEARNING_QUESTIONS,
-    SMTP_EMAIL, SMTP_PASSWORD, NOTIFY_EMAIL,
+    NOTIFY_EMAIL,
 )
+from src.email_utils import send_email
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,10 +52,6 @@ def calculate_week() -> int:
 
 def send_learning_input_email(week: int) -> bool:
     """Send Email 1: What did you learn this week? Contains the form link."""
-    if not SMTP_EMAIL or not SMTP_PASSWORD:
-        log.warning("SMTP not configured — cannot send learning email")
-        return False
-
     theme = WEEK_THEMES.get(week, f"Week {week}")
     questions = LEARNING_QUESTIONS.get(week, [
         "What did you learn this week?",
@@ -121,21 +115,12 @@ padding-top:14px;margin-top:16px;">
 </body></html>
 """
 
-    msg = MIMEMultipart("alternative")
-    msg["From"] = SMTP_EMAIL
-    msg["To"] = NOTIFY_EMAIL
-    msg["Subject"] = f"📚 Week {week} LinkedIn — What did you learn this week?"
-    msg.attach(MIMEText(html, "html"))
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-            s.login(SMTP_EMAIL, SMTP_PASSWORD)
-            s.send_message(msg)
+    ok = send_email(NOTIFY_EMAIL, f"📚 Week {week} LinkedIn — What did you learn this week?", html)
+    if ok:
         log.info(f"Learning input email sent to {NOTIFY_EMAIL}")
-        return True
-    except Exception as e:
-        log.error(f"Email failed: {e}")
-        return False
+    else:
+        log.error("Email failed — check RESEND_API_KEY (Railway) or SMTP_EMAIL/SMTP_PASSWORD")
+    return ok
 
 
 def run(week: int = None, dry_run: bool = False):
@@ -160,7 +145,7 @@ def run(week: int = None, dry_run: bool = False):
         log.info(f"Learning form: {get_base_url()}/input/{week}")
         log.info("Once you submit notes, posts are generated and approval email follows.")
     else:
-        log.error("Email failed — check SMTP_EMAIL / SMTP_PASSWORD in Railway env vars")
+        log.error("Email failed — check RESEND_API_KEY (Railway) or SMTP_EMAIL/SMTP_PASSWORD")
         log.info(f"Open the form manually: {get_base_url()}/input/{week}")
 
     log.info("=" * 55)
