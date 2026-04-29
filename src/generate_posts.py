@@ -36,12 +36,16 @@ SYSTEM_PROMPT = """You are a LinkedIn content strategist for a senior backend en
 transitioning to AI infrastructure. You write posts that sound like a sharp,
 opinionated senior engineer — not a marketer, not a student, not an influencer.
 
-Two modes:
-1. INDUSTRY post: React to real news/trends. Add the unique backend engineer
-   perspective. Make it useful for anyone in AI/MLOps space.
+Three modes:
+1. INDUSTRY post (industry_news, industry_trend): React to real news/trends.
+   Add the unique backend engineer perspective. Make it useful for anyone in AI/MLOps space.
 
-2. PERSONAL post (bridge or learning): Authentic first-person. Show real thinking,
-   including confusion, mistakes, and breakthroughs.
+2. GROWTH post (bridge, growth, opinion): Teach something actionable. Bridge posts connect
+   backend experience to AI. Growth posts share a specific tool/resource/tactic the audience
+   can use today. Opinion posts make a bold, backed-up claim.
+
+3. LEARNING post: Authentic first-person Saturday reflection. Show real thinking
+   from this week — specific tools used, what broke, genuine breakthroughs.
 
 Writing rules:
 - First line MUST be a scroll-stopper (specific claim, surprising stat, bold opinion)
@@ -61,14 +65,19 @@ POST_SCHEDULE = [
     ("Monday",    "10:00", "industry_news",    "Biggest AI/infra news of the week — your sharp take"),
     ("Tuesday",   "17:00", "bridge",           "Timeless backend→AI concept analogy (your expertise)"),
     ("Wednesday", "10:00", "industry_trend",   "Broader trend in AI infra — tools, patterns, companies"),
-    ("Thursday",  "17:00", "learning",         "What YOU learned or built this week — 1 specific insight"),
+    ("Thursday",  "17:00", "growth",           "Curated tool, resource, or tactic your audience can act on immediately"),
     ("Friday",    "10:00", "opinion",          "Hot take or quick tip — polarising, memorable, useful"),
+    ("Saturday",  "10:00", "learning",         "Weekly learning checkpoint — what you studied, built, or discovered"),
 ]
+
+# Ordered list of all post days in the weekly cycle
+_ALL_POST_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 HASHTAG_SETS = {
     "industry_news":  ["#AIInfrastructure", "#MLOps", "#LLMs", "#AI", "#MachineLearning"],
     "bridge":         ["#Kafka", "#BackendToAI", "#SystemDesign", "#AIInfrastructure", "#DistributedSystems"],
     "industry_trend": ["#MLOps", "#AIInfrastructure", "#RAG", "#LLMs", "#VectorDB"],
+    "growth":         ["#AIInfrastructure", "#MLOps", "#LearnAI", "#BackendToAI", "#AITools"],
     "learning":       ["#100DaysOfAI", "#LearningInPublic", "#BackendToAI", "#Python", "#AIInfrastructure"],
     "opinion":        ["#AIInfrastructure", "#MLOps", "#TechOpinion", "#BackendEngineering", "#AI"],
 }
@@ -77,28 +86,29 @@ _DAY_INSTRUCTIONS = {
     "Monday":    "Pick the most timely research topic. Write a sharp take, not just a summary. Your backend angle must be in the post.",
     "Tuesday":   "Use YOUR expertise (Kafka/Spring Boot/K8s). Find one specific mapping from your backend world to an AI concept. Make it concrete.",
     "Wednesday": "Pick a different research topic. Zoom out — what does this mean for the industry in 6-12 months? What should engineers do?",
-    "Thursday":  "Use the personal learning notes. One specific thing that clicked or surprised you. Show the learning curve honestly.",
+    "Thursday":  "Share a specific tool, resource, benchmark, or workflow that your audience can act on today. What it is, why AI infra engineers should care, and one concrete thing to try.",
     "Friday":    "Bold, polarising take based on research or your experience. Start with the opinion, then back it up. Not aggressive — just confident.",
+    "Saturday":  "Use the personal learning notes. One specific insight, confusion, or breakthrough from this week. Honest and concrete — show the learning curve.",
 }
 
 
 def get_dynamic_schedule() -> list[tuple]:
-    """Return POST_SCHEDULE entries for remaining weekdays.
+    """Return POST_SCHEDULE entries for remaining days in the posting cycle.
 
-    Always starts from the NEXT weekday (today's slots are never included):
-      Mon → 4 posts (Tue–Fri)
-      Tue → 3 posts (Wed–Fri)
-      Wed → 2 posts (Thu–Fri)
-      Thu → 1 post  (Fri)
-      Fri/Sat/Sun → 5 posts (Mon–Fri next week)
+    Cycle is Mon–Sat (6 posts). Always starts from the NEXT post day:
+      Mon → 5 posts (Tue–Sat)
+      Tue → 4 posts (Wed–Sat)
+      Wed → 3 posts (Thu–Sat)
+      Thu → 2 posts (Fri–Sat)
+      Fri → 1 post  (Sat)
+      Sat/Sun → 6 posts (Mon–Sat next week)
     """
-    wd = datetime.now().weekday()  # 0=Mon, 6=Sun
-    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    wd = datetime.now().weekday()  # 0=Mon … 5=Sat, 6=Sun
 
-    if wd < 4:      # Mon–Thu: start from tomorrow
-        remaining = set(day_names[wd + 1:])
-    else:           # Fri/Sat/Sun: full next week
-        remaining = set(day_names)
+    if wd <= 4:     # Mon(0)–Fri(4): include everything after today up to Sat
+        remaining = set(_ALL_POST_DAYS[wd + 1:])
+    else:           # Sat(5) or Sun(6): full next week Mon–Sat
+        remaining = set(_ALL_POST_DAYS)
     return [e for e in POST_SCHEDULE if e[0] in remaining]
 
 
@@ -152,8 +162,8 @@ Return ONLY valid JSON (no markdown):
   "posts": [
     {{
       "title": "short internal title",
-      "type": "industry_news|bridge|industry_trend|learning|opinion",
-      "schedule_day": "Monday|Tuesday|Wednesday|Thursday|Friday",
+      "type": "industry_news|bridge|industry_trend|growth|opinion|learning",
+      "schedule_day": "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday",
       "schedule_time": "10:00|17:00",
       "content": "full post text here — no hashtags in body",
       "hashtags": ["#Tag1", "#Tag2", "#Tag3", "#Tag4"],
@@ -209,20 +219,19 @@ def generate_posts(
         raise
 
     # Assign actual calendar dates to each post's schedule_day.
-    # Always starts from the next weekday (mirrors get_dynamic_schedule).
+    # Mirrors get_dynamic_schedule: always starts from the next post day.
     today = datetime.now()
     wd    = today.weekday()
-    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
-    if wd < 4:      # Mon–Thu: start from tomorrow
-        remaining  = day_names[wd + 1:]
+    if wd <= 4:     # Mon(0)–Fri(4): base is tomorrow
+        remaining  = _ALL_POST_DAYS[wd + 1:]
         base_date  = today + timedelta(days=1)
-    elif wd == 4:   # Friday → next Monday (3 days ahead)
-        remaining  = day_names
-        base_date  = today + timedelta(days=3)
-    else:           # Sat(5)/Sun(6) → next Monday
-        remaining  = day_names
-        base_date  = today + timedelta(days=(7 - wd))
+    elif wd == 5:   # Saturday: base is next Monday (2 days)
+        remaining  = _ALL_POST_DAYS
+        base_date  = today + timedelta(days=2)
+    else:           # Sunday(6): base is next Monday (1 day)
+        remaining  = _ALL_POST_DAYS
+        base_date  = today + timedelta(days=1)
 
     day_offsets = {day: i for i, day in enumerate(remaining)}
 
@@ -253,6 +262,7 @@ def preview_posts(data: dict):
         "industry_news":  "📰",
         "bridge":         "🌉",
         "industry_trend": "📈",
+        "growth":         "🌱",
         "learning":       "🎓",
         "opinion":        "💡",
     }

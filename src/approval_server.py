@@ -105,7 +105,7 @@ def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
 def send_review_email(to_email: str, review_token: str, week: int, posts: list) -> bool:
     review_url = f"{get_base_url()}/review/{review_token}"
     type_icons = {"industry_news": "📰", "bridge": "🌉",
-                  "industry_trend": "📈", "learning": "🎓", "opinion": "💡"}
+                  "industry_trend": "📈", "growth": "🌱", "learning": "🎓", "opinion": "💡"}
 
     previews = ""
     for p in posts:
@@ -308,6 +308,7 @@ REVIEW_HTML = """<!DOCTYPE html>
     .type-industry_news{background:rgba(139,92,246,.2);color:#a78bfa;border:1px solid rgba(139,92,246,.3)}
     .type-bridge{background:rgba(6,214,160,.15);color:#06d6a0;border:1px solid rgba(6,214,160,.3)}
     .type-industry_trend{background:rgba(59,130,246,.2);color:#60a5fa;border:1px solid rgba(59,130,246,.3)}
+    .type-growth{background:rgba(16,185,129,.2);color:#34d399;border:1px solid rgba(16,185,129,.3)}
     .type-learning{background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.3)}
     .type-opinion{background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.3)}
     .sched{margin-left:auto;font-family:monospace;font-size:12px;color:#64748b}
