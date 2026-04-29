@@ -35,6 +35,8 @@ pending_reviews = {}
 def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
     token      = os.getenv("BUFFER_ACCESS_TOKEN")
     profile_id = os.getenv("BUFFER_PROFILE_ID")
+    if not token or not profile_id:
+        return {"success": False, "error": "BUFFER_ACCESS_TOKEN or BUFFER_PROFILE_ID not set in Railway env vars"}
     dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
     payload = {
         "access_token":  token,
@@ -49,7 +51,14 @@ def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
         data = r.json()
         if data.get("success"):
             return {"success": True, "id": data.get("updates", [{}])[0].get("id")}
-    return {"success": False, "error": r.text[:200]}
+        return {"success": False, "error": data.get("message", r.text[:200])}
+    # Parse JSON error body if possible
+    try:
+        err = r.json()
+        msg = err.get("error") or err.get("message") or str(err)
+    except Exception:
+        msg = r.text[:300]
+    return {"success": False, "error": f"HTTP {r.status_code}: {msg}"}
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
