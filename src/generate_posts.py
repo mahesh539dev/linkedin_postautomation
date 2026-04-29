@@ -83,39 +83,23 @@ _DAY_INSTRUCTIONS = {
 
 
 def get_dynamic_schedule() -> list[tuple]:
-    """Return POST_SCHEDULE entries for available slots.
+    """Return POST_SCHEDULE entries for remaining weekdays.
 
-    Before 2pm on a weekday: include today if the post's scheduled time is
-    still in the future, then remaining weekdays this week.
-    After 2pm on a weekday, or on Friday after 2pm: start from next weekday.
-    Weekend: full Mon-Fri next week.
+    Always starts from the NEXT weekday (today's slots are never included):
+      Mon → 4 posts (Tue–Fri)
+      Tue → 3 posts (Wed–Fri)
+      Wed → 2 posts (Thu–Fri)
+      Thu → 1 post  (Fri)
+      Fri/Sat/Sun → 5 posts (Mon–Fri next week)
     """
-    today = datetime.now()
-    wd    = today.weekday()  # 0=Mon, 6=Sun
-    hour  = today.hour
+    wd = datetime.now().weekday()  # 0=Mon, 6=Sun
     day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
-    if wd <= 4:  # weekday
-        if hour < 14:
-            # Include today only if its scheduled post time hasn't passed yet
-            today_name = day_names[wd]
-            today_entries = [
-                e for e in POST_SCHEDULE
-                if e[0] == today_name and int(e[1].split(":")[0]) > hour
-            ]
-            rest_names = set(day_names[wd + 1:])
-            rest_entries = [e for e in POST_SCHEDULE if e[0] in rest_names]
-            return today_entries + rest_entries
-        else:
-            # After 2pm: skip today, start from next weekday
-            if wd < 4:
-                remaining = set(day_names[wd + 1:])
-            else:  # Friday after 2pm → full next week
-                remaining = set(day_names)
-            return [e for e in POST_SCHEDULE if e[0] in remaining]
-    else:
-        # Weekend → full next week Mon-Fri
-        return list(POST_SCHEDULE)
+    if wd < 4:      # Mon–Thu: start from tomorrow
+        remaining = set(day_names[wd + 1:])
+    else:           # Fri/Sat/Sun: full next week
+        remaining = set(day_names)
+    return [e for e in POST_SCHEDULE if e[0] in remaining]
 
 
 def build_generation_prompt(
@@ -225,27 +209,20 @@ def generate_posts(
         raise
 
     # Assign actual calendar dates to each post's schedule_day.
-    # Before 2pm on a weekday: today counts (5pm slot still reachable).
-    # After 2pm on a weekday: start from next weekday.
-    # Weekend: start from next Monday.
+    # Always starts from the next weekday (mirrors get_dynamic_schedule).
     today = datetime.now()
     wd    = today.weekday()
-    hour  = today.hour
     day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
-    if wd <= 4:  # weekday
-        if hour < 14:
-            remaining = day_names[wd:]       # today + rest of week
-            base_date = today
-        elif wd < 4:
-            remaining = day_names[wd + 1:]   # tomorrow + rest of week
-            base_date = today + timedelta(days=1)
-        else:                                # Friday after 2pm → next week
-            remaining = day_names
-            base_date = today + timedelta(days=3)
-    else:                                    # weekend → next Monday
-        remaining = day_names
-        base_date = today + timedelta(days=(7 - wd) % 7 or 7)
+    if wd < 4:      # Mon–Thu: start from tomorrow
+        remaining  = day_names[wd + 1:]
+        base_date  = today + timedelta(days=1)
+    elif wd == 4:   # Friday → next Monday (3 days ahead)
+        remaining  = day_names
+        base_date  = today + timedelta(days=3)
+    else:           # Sat(5)/Sun(6) → next Monday
+        remaining  = day_names
+        base_date  = today + timedelta(days=(7 - wd))
 
     day_offsets = {day: i for i, day in enumerate(remaining)}
 
