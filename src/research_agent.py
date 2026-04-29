@@ -32,28 +32,25 @@ Target audience: AI infrastructure recruiters, backend engineers pivoting to AI,
 
 # ── Research prompt ───────────────────────────────────────────────────────────
 
-RESEARCH_SYSTEM_PROMPT = """You are a LinkedIn content researcher for a senior backend engineer
-transitioning to AI infrastructure. Your job is to find the most engaging,
-timely topics from the past 7 days in AI infrastructure, MLOps, LLMs, Kafka,
-Kubernetes, and backend engineering.
+RESEARCH_SYSTEM_PROMPT = """You are a senior AI infrastructure engineer analyzing weekly trends.
 
-You have access to web search. Use it to find:
-- Real news, releases, benchmarks from the past week
-- Trending discussions on LinkedIn/Twitter/Hacker News in AI/MLOps space
-- New tool releases (vLLM updates, LangChain releases, new vector DBs, etc.)
-- Research papers getting traction
-- Industry moves (companies adopting AI infra, new funding, acquisitions)
+Your job is NOT to summarize news.
+Your job is to extract engineering insights from real-world AI infrastructure developments.
 
-For each topic you find, provide:
-1. The actual news/trend (with source)
-2. Why it matters to AI infrastructure engineers
-3. The angle a backend engineer (Kafka/Spring Boot) would uniquely bring
-4. A hook sentence that would stop scrolling on LinkedIn
+For each topic:
+1. What actually happened (fact-based, from the provided headlines)
+2. Why it matters for AI infrastructure engineers
+3. Backend/system design angle (Kafka, distributed systems, APIs, distributed inference)
+4. A strong LinkedIn hook with a specific number, comparison, or engineering claim
+5. The concrete infrastructure tradeoff involved (latency vs cost, throughput vs memory, etc.)
+6. A real-world production use case where an engineer would encounter this
+7. Why AI infrastructure recruiters would care about this topic
 
-Be specific. Style example (do NOT use this as a topic — find real news):
-"vLLM v0.X.Y released with N% throughput improvement — here's the actual change"
-That level of specificity is the target. The actual topics must come from the
-provided trending headlines, not from this example.
+Avoid generic summaries. Think like someone reviewing production architecture decisions.
+
+Style target — do NOT use as a topic, this is only a specificity example:
+"vLLM v0.X.Y: N% throughput gain at the cost of 2x memory — here's the batching tradeoff"
+Every topic must be that specific. Source it from the provided headlines.
 """
 
 RESEARCH_USER_PROMPT = """
@@ -72,9 +69,14 @@ Search the web for the most relevant and timely topics from the PAST 7 DAYS in:
 6. Backend engineering + AI intersection (any language)
 7. RAG, agents, or LLM deployment patterns getting traction
 
-IMPORTANT: You MUST select topics exclusively from the provided trending headlines
-above. Do NOT invent topics, reuse examples from this prompt, or pick generic
-evergreen content. Every topic must trace back to a specific headline in the list.
+RULES — a topic is REJECTED if:
+- It has no concrete infrastructure tradeoff (not "it's faster" but "latency drops X% at cost of Y")
+- It has no real production use case
+- The hook is generic (e.g. "AI is changing everything", "the future is here")
+
+IMPORTANT: Select topics exclusively from the provided trending headlines.
+Do NOT invent topics, reuse prompt examples, or pick generic evergreen content.
+Every topic must trace back to a specific headline in the list.
 
 Find 6 topics total. Return as JSON:
 {{
@@ -87,8 +89,11 @@ Find 6 topics total. Return as JSON:
       "source": "where you found this",
       "why_it_matters": "2-3 sentences on why AI infra engineers care",
       "backend_angle": "the unique perspective a Kafka/Spring Boot engineer brings",
-      "linkedin_hook": "one sentence that would stop scrolling — specific, bold, surprising",
-      "suggested_post_type": "industry_news|industry_trend|opinion|bridge|quick_tip",
+      "linkedin_hook": "one sentence — must contain a number, comparison, or engineering claim",
+      "infra_tradeoff": "specific tradeoff involved (e.g. latency vs throughput, cost vs quality)",
+      "real_world_use": "concrete production scenario where an engineer encounters this",
+      "why_recruiters_care": "what skill signal this sends to AI infra recruiters",
+      "suggested_post_type": "industry_news|industry_trend|opinion|bridge|model_comparison",
       "freshness": "how old is this news (hours/days)"
     }}
   ],
@@ -155,6 +160,37 @@ def research_weekly_topics(week_number: int, save: bool = True) -> dict:
             print(raw[:1000])
             raise
 
+    # Validate topics — drop any that lack infra depth or are too generic
+    _GENERIC_PHRASES = [
+        "ai is growing", "the future is", "game changer", "game-changer",
+        "ai is changing everything", "revolutionary", "unprecedented"
+    ]
+    valid, dropped = [], []
+    for topic in data.get("topics", []):
+        hook = topic.get("linkedin_hook", "").lower()
+        missing_tradeoff = not topic.get("infra_tradeoff", "").strip()
+        missing_use      = not topic.get("real_world_use", "").strip()
+        too_generic      = any(p in hook for p in _GENERIC_PHRASES)
+        if missing_tradeoff or missing_use or too_generic:
+            reason = (
+                "missing infra_tradeoff" if missing_tradeoff else
+                "missing real_world_use" if missing_use else
+                "hook too generic"
+            )
+            print(f"   ⚠️  Dropping topic #{topic.get('rank')} ({reason}): {topic.get('headline','')[:60]}")
+            dropped.append(topic)
+        else:
+            valid.append(topic)
+
+    if valid:
+        for i, t in enumerate(valid, 1):
+            t["rank"] = i
+        data["topics"] = valid
+        if dropped:
+            print(f"   Kept {len(valid)} topics, dropped {len(dropped)} for lacking infra depth")
+    else:
+        print("   ⚠️  All topics failed validation — keeping original set")
+
     data["week"] = week_number
 
     if save:
@@ -188,12 +224,14 @@ def display_research(data: dict):
         icon = category_icons.get(topic.get("category", ""), "📌")
 
         print(f"\n  {icon} Topic #{topic['rank']}: [{topic['category']}]")
-        print(f"     Headline: {topic['headline']}")
-        print(f"     Source:   {topic.get('source', 'N/A')}")
-        print(f"     Fresh:    {topic.get('freshness', 'N/A')}")
-        print(f"     Hook:     \"{topic['linkedin_hook']}\"")
-        print(f"     Type:     {topic['suggested_post_type']}")
-        print(f"     Backend angle: {topic['backend_angle'][:80]}...")
+        print(f"     Headline:        {topic['headline']}")
+        print(f"     Source:          {topic.get('source', 'N/A')}")
+        print(f"     Fresh:           {topic.get('freshness', 'N/A')}")
+        print(f"     Hook:            \"{topic['linkedin_hook']}\"")
+        print(f"     Tradeoff:        {topic.get('infra_tradeoff', 'N/A')[:80]}")
+        print(f"     Real-world use:  {topic.get('real_world_use', 'N/A')[:80]}")
+        print(f"     Recruiter signal:{topic.get('why_recruiters_care', 'N/A')[:80]}")
+        print(f"     Type:            {topic['suggested_post_type']}")
 
     order = data.get("recommended_post_order", [])
     if order:

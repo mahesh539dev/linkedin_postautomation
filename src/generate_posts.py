@@ -11,6 +11,7 @@ This gives you industry reach + personal credibility.
 
 import json
 import os
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -32,83 +33,116 @@ Unique voice: Backend/distributed systems thinker who connects Kafka/K8s
 LinkedIn goal: Get 2-3 AI infrastructure engineer interview offers by Week 9
 """
 
-SYSTEM_PROMPT = """You are a LinkedIn content strategist for a senior backend engineer
-transitioning to AI infrastructure. You write posts that sound like a sharp,
-opinionated senior engineer — not a marketer, not a student, not an influencer.
+SYSTEM_INFRA_CONTEXT = """
+You are writing for an engineer who BUILDS AI systems — not one who reads about them.
 
-Three modes:
-1. INDUSTRY post (industry_news, industry_trend): React to real news/trends.
-   Add the unique backend engineer perspective. Make it useful for anyone in AI/MLOps space.
+This engineer has built:
+- Multi-model LLM orchestration: DeepSeek for research ranking, Kimi for generation,
+  Claude Haiku for refinement, Claude Sonnet + GPT-4o for rewrites and scoring
+- Cost optimisation pipelines comparing models across latency, quality, and price
+- Automated content pipeline: HN trend ingestion → DeepSeek ranking → Kimi generation
+  → Claude refinement → 3-way scoring → Buffer scheduling
+- Production Kafka systems processing 500K+ events/day in financial payment infrastructure
 
-2. ANALYSIS post (bridge, model_comparison, opinion): Bridge posts connect backend experience
-   to AI. Model comparison posts compare 2-3 trending models on hard metrics — latency, cost,
-   context window, deployment complexity — and give a clear infrastructure verdict.
-   Opinion posts make a bold, backed-up claim.
+Write like a production engineer:
+- Include system-level thinking and architecture decisions
+- Name specific tradeoffs (latency vs cost, throughput vs memory, consistency vs availability)
+- Reference model selection reasoning where it fits naturally (why pick Kimi over GPT for generation?)
+- Assume the reader builds these systems too — no generic AI explanations
 
-3. LEARNING post: Authentic first-person Saturday reflection. Show real thinking
-   from this week — specific tools used, what broke, genuine breakthroughs.
+Target audience:
+- AI infrastructure recruiters evaluating system design depth
+- Backend engineers transitioning to AI who see themselves in this story
+- MLOps engineers who care about production tradeoffs
+"""
+
+SYSTEM_PROMPT = """You are a LinkedIn content writer for a senior backend engineer
+building real AI infrastructure systems. Write like a sharp, opinionated production
+engineer — not a marketer, student, or influencer.
+
+Post modes:
+1. INDUSTRY (industry_news, industry_trend): React to real news with a backend/infra
+   angle. What does this mean for production systems? What tradeoff does it expose?
+
+2. ANALYSIS (bridge, model_comparison): Bridge posts map a distributed systems concept
+   (Kafka, K8s, Spring Boot) to an AI equivalent. Model comparison posts compare 2-3
+   models on hard metrics — tok/s, cost/million tokens, context window, VRAM, deployment
+   complexity — and give a clear production verdict.
+
+3. OPINION: Start with the claim, back it up with data or a real experience.
+   Polarising is fine. Vague is not.
+
+4. LEARNING (learning, build_in_public): Learning posts show honest weekly reflection
+   — what clicked, what broke, one concrete number or result. Build-in-public posts
+   show a real system: architecture diagram in text, tradeoffs made, cost/latency
+   results, and what you'd do differently.
 
 Writing rules:
-- First line MUST be a scroll-stopper (specific claim, surprising stat, bold opinion)
-- Never start with "I" on the first line
-- No phrases: "Excited to share", "Game-changer", "Thrilled to announce", "Dive into"
-- Use specific numbers always (40% improvement, 500K events/day, 768 dimensions)
-- Industry posts: your take matters more than the news summary
-- Max 2 emojis per post — use only if genuinely fitting
+- First line MUST contain a number (latency, cost, throughput), a comparison (X vs Y),
+  or a strong engineering claim. Never starts with "I".
+- Each post MUST include at least one: system design insight, infra tradeoff,
+  real-world engineering decision, or known limitation / failure case.
+- No phrases: "Excited to share", "Game-changer", "Thrilled", "Dive into",
+  "Revolutionising", "AI is changing everything"
+- Numbers beat adjectives: "120 tok/s" not "blazing fast", "4x memory" not "much more"
+- Max 2 emojis — only if genuinely fitting
 - Hashtags at END only, never in body
 - 150–220 words per post
-- Conversational but technically precise
-"""
+""" + SYSTEM_INFRA_CONTEXT
 
 # ── Schedule ──────────────────────────────────────────────────────────────────
 
 POST_SCHEDULE = [
-    ("Monday",    "10:00", "industry_news",    "Biggest AI/infra news of the week — your sharp take"),
-    ("Tuesday",   "17:00", "bridge",           "Timeless backend→AI concept analogy (your expertise)"),
-    ("Wednesday", "10:00", "industry_trend",   "Broader trend in AI infra — tools, patterns, companies"),
-    ("Thursday",  "17:00", "model_comparison",  "Compare 2-3 currently trending models on hard infra metrics — give a verdict"),
-    ("Friday",    "10:00", "opinion",          "Hot take or quick tip — polarising, memorable, useful"),
-    ("Saturday",  "10:00", "learning",         "Weekly learning checkpoint — what you studied, built, or discovered"),
+    ("Monday",    "10:00", "industry_news",    "Biggest AI/infra news of the week — engineering breakdown, not summary"),
+    ("Tuesday",   "17:00", "bridge",           "Map one backend concept (Kafka/K8s/Spring) to its AI infrastructure equivalent"),
+    ("Wednesday", "10:00", "industry_trend",   "Broader AI/infra trend — what it means for production systems in 6-12 months"),
+    ("Thursday",  "17:00", "model_comparison", "Compare 2-3 trending models on hard infra metrics — give a production verdict"),
+    ("Friday",    "10:00", "opinion",          "Data-backed hot take — start with the claim, then the evidence"),
+    ("Saturday",  "10:00", "learning",         "Weekly learning checkpoint — one concrete insight, result, or failure from your notes"),
+    ("Sunday",    "10:00", "build_in_public",  "Show a real system you built: architecture, tradeoffs, results, and what you'd change"),
 ]
 
-# Ordered list of all post days in the weekly cycle
-_ALL_POST_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+# Ordered list of all post days in the weekly cycle (Mon–Sun)
+_ALL_POST_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 HASHTAG_SETS = {
-    "industry_news":  ["#AIInfrastructure", "#MLOps", "#LLMs", "#AI", "#MachineLearning"],
-    "bridge":         ["#Kafka", "#BackendToAI", "#SystemDesign", "#AIInfrastructure", "#DistributedSystems"],
-    "industry_trend": ["#MLOps", "#AIInfrastructure", "#RAG", "#LLMs", "#VectorDB"],
+    "industry_news":    ["#AIInfrastructure", "#MLOps", "#LLMs", "#AI", "#MachineLearning"],
+    "bridge":           ["#Kafka", "#BackendToAI", "#SystemDesign", "#AIInfrastructure", "#DistributedSystems"],
+    "industry_trend":   ["#MLOps", "#AIInfrastructure", "#RAG", "#LLMs", "#VectorDB"],
     "model_comparison": ["#LLMs", "#AIInfrastructure", "#ModelBenchmark", "#MLOps", "#AI"],
-    "learning":       ["#100DaysOfAI", "#LearningInPublic", "#BackendToAI", "#Python", "#AIInfrastructure"],
-    "opinion":        ["#AIInfrastructure", "#MLOps", "#TechOpinion", "#BackendEngineering", "#AI"],
+    "opinion":          ["#AIInfrastructure", "#MLOps", "#TechOpinion", "#BackendEngineering", "#AI"],
+    "learning":         ["#100DaysOfAI", "#LearningInPublic", "#BackendToAI", "#Python", "#AIInfrastructure"],
+    "build_in_public":  ["#BuildInPublic", "#AIInfrastructure", "#SystemDesign", "#MLOps", "#100DaysOfAI"],
 }
 
 _DAY_INSTRUCTIONS = {
-    "Monday":    "Pick the most timely research topic. Write a sharp take, not just a summary. Your backend angle must be in the post.",
-    "Tuesday":   "Use YOUR expertise (Kafka/Spring Boot/K8s). Find one specific mapping from your backend world to an AI concept. Make it concrete.",
-    "Wednesday": "Pick a different research topic. Zoom out — what does this mean for the industry in 6-12 months? What should engineers do?",
-    "Thursday":  "From the research topics, pick the most relevant model comparison or benchmark. Compare 2-3 trending models on hard infra metrics: latency (tok/s), cost per million tokens, context window, quantization options, deployment complexity. Give a clear verdict — which one you'd choose for production and why. Numbers beat adjectives.",
-    "Friday":    "Bold, polarising take based on research or your experience. Start with the opinion, then back it up. Not aggressive — just confident.",
-    "Saturday":  "Use the personal learning notes. One specific insight, confusion, or breakthrough from this week. Honest and concrete — show the learning curve.",
+    "Monday":    "Pick the most timely research topic. Give the engineering breakdown — what changed in the system, what tradeoff it exposes, what it means for production. Your distributed systems angle must be visible.",
+    "Tuesday":   "Use YOUR expertise (Kafka/Spring Boot/K8s). Find one precise mapping: pick a backend concept and show its direct AI infrastructure equivalent. Concrete analogy, real numbers, clear conclusion.",
+    "Wednesday": "Pick a different research topic. Zoom out: what does this mean for the industry in 6-12 months? What architecture decision should engineers make now?",
+    "Thursday":  "Compare 2-3 trending models from the research on hard infra metrics: tok/s throughput, cost per million tokens, context window, VRAM requirement, quantization options, cold-start latency. Give a clear production verdict with numbers — which would you deploy and why.",
+    "Friday":    "Data-backed opinion. Start with the engineering claim, then back it up with a specific result, benchmark, or failure case. Not aggressive — just confident and specific.",
+    "Saturday":  "Use the personal learning notes. One specific insight, confusion, or breakthrough. Show the actual learning curve: what you tried, what broke, what the number was.",
+    "Sunday":    "Show a real system you built this week. Include: what it does, the architecture (describe it in text), why you made the key tradeoffs, latency/cost/accuracy results, and one thing you'd redesign. This is your strongest hiring signal — be specific about the engineering decisions.",
 }
 
 
 def get_dynamic_schedule() -> list[tuple]:
     """Return POST_SCHEDULE entries for remaining days in the posting cycle.
 
-    Cycle is Mon–Sat (6 posts). Always starts from the NEXT post day:
-      Mon → 5 posts (Tue–Sat)
-      Tue → 4 posts (Wed–Sat)
-      Wed → 3 posts (Thu–Sat)
-      Thu → 2 posts (Fri–Sat)
-      Fri → 1 post  (Sat)
-      Sat/Sun → 6 posts (Mon–Sat next week)
+    Cycle is Mon–Sun (7 posts). Always starts from the NEXT post day:
+      Mon → 6 posts (Tue–Sun)
+      Tue → 5 posts (Wed–Sun)
+      Wed → 4 posts (Thu–Sun)
+      Thu → 3 posts (Fri–Sun)
+      Fri → 2 posts (Sat–Sun)
+      Sat → 1 post  (Sun)
+      Sun → 7 posts (Mon–Sun next week)
     """
     wd = datetime.now().weekday()  # 0=Mon … 5=Sat, 6=Sun
 
-    if wd <= 4:     # Mon(0)–Fri(4): include everything after today up to Sat
+    if wd <= 5:     # Mon(0)–Sat(5): schedule from tomorrow through Sunday
         remaining = set(_ALL_POST_DAYS[wd + 1:])
-    else:           # Sat(5) or Sun(6): full next week Mon–Sat
+    else:           # Sun(6): full next week Mon–Sun
         remaining = set(_ALL_POST_DAYS)
     return [e for e in POST_SCHEDULE if e[0] in remaining]
 
@@ -121,14 +155,16 @@ def build_generation_prompt(
 ) -> str:
 
     topics_text = ""
-    for t in research_topics[:5]:
+    for t in research_topics[:6]:
         topics_text += f"""
 Topic #{t['rank']}: {t['headline']}
-  Category: {t['category']}
-  Why it matters: {t['why_it_matters']}
-  Backend angle: {t['backend_angle']}
+  Category:        {t['category']}
+  Why it matters:  {t['why_it_matters']}
+  Infra tradeoff:  {t.get('infra_tradeoff', 'N/A')}
+  Real-world use:  {t.get('real_world_use', 'N/A')}
+  Backend angle:   {t['backend_angle']}
   Hook suggestion: {t['linkedin_hook']}
-  Suggested type: {t['suggested_post_type']}
+  Suggested type:  {t['suggested_post_type']}
 """
 
     instructions = "\n".join(
@@ -163,13 +199,14 @@ Return ONLY valid JSON (no markdown):
   "posts": [
     {{
       "title": "short internal title",
-      "type": "industry_news|bridge|industry_trend|model_comparison|opinion|learning",
-      "schedule_day": "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday",
+      "type": "industry_news|bridge|industry_trend|model_comparison|opinion|learning|build_in_public",
+      "schedule_day": "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday",
       "schedule_time": "10:00|17:00",
-      "content": "full post text here — no hashtags in body",
+      "content": "full post text — no hashtags in body — must include one infra tradeoff or system insight",
       "hashtags": ["#Tag1", "#Tag2", "#Tag3", "#Tag4"],
-      "source_topic": "which research topic this is based on (or 'personal')",
-      "why_this_post": "one sentence on why this post will get engagement"
+      "source_topic": "which research topic this draws from (or 'personal')",
+      "infra_signal": "one sentence on the system design / engineering depth in this post",
+      "why_this_post": "one sentence on why this post signals AI infra engineering skill"
     }}
   ]
 }}
@@ -182,9 +219,7 @@ def generate_posts(
     learning_notes: str,
     save: bool = True
 ) -> dict:
-    """
-    Generate 5 LinkedIn posts mixing industry research + personal learning.
-    """
+    """Generate LinkedIn posts for the remaining days this week."""
     from src.llm_client import call_llm
 
     research_topics = research_data.get("topics", [])
@@ -203,7 +238,9 @@ def generate_posts(
         schedule,
     )
 
-    raw = call_llm("kimi", prompt, system=SYSTEM_PROMPT, max_tokens=4000)
+    t0 = time.time()
+    raw = call_llm("kimi", prompt, system=SYSTEM_PROMPT, max_tokens=5000)
+    gen_latency = round(time.time() - t0, 1)
 
     # Clean up markdown if present
     if "```json" in raw:
@@ -250,20 +287,29 @@ def generate_posts(
     print(f"   Posts after normalisation: {len(data['posts'])} "
           f"({', '.join(p['schedule_day'] for p in data['posts'])})")
 
-    # Assign actual calendar dates to each post's schedule_day.
-    # Mirrors get_dynamic_schedule: always starts from the next post day.
+    # Add pipeline metadata (logged + usable in build_in_public posts)
+    data["meta"] = {
+        "pipeline":        "multi-model orchestration",
+        "models_used":     ["deepseek", "kimi", "claude-haiku", "claude-sonnet", "gpt-4o"],
+        "generation_model": "kimi",
+        "gen_latency_s":   gen_latency,
+        "post_count":      len(data["posts"]),
+        "estimated_cost_usd": "~$0.026",
+        "week":            week_number,
+        "generated_at":    datetime.now().isoformat(),
+    }
+    print(f"   Generation latency: {gen_latency}s")
+
+    # Assign actual calendar dates. Mirrors get_dynamic_schedule logic exactly.
     today = datetime.now()
     wd    = today.weekday()
 
-    if wd <= 4:     # Mon(0)–Fri(4): base is tomorrow
-        remaining  = _ALL_POST_DAYS[wd + 1:]
-        base_date  = today + timedelta(days=1)
-    elif wd == 5:   # Saturday: base is next Monday (2 days)
-        remaining  = _ALL_POST_DAYS
-        base_date  = today + timedelta(days=2)
-    else:           # Sunday(6): base is next Monday (1 day)
-        remaining  = _ALL_POST_DAYS
-        base_date  = today + timedelta(days=1)
+    if wd <= 5:     # Mon(0)–Sat(5): base is tomorrow
+        remaining = _ALL_POST_DAYS[wd + 1:]
+        base_date = today + timedelta(days=1)
+    else:           # Sun(6): base is next Monday
+        remaining = _ALL_POST_DAYS
+        base_date = today + timedelta(days=1)
 
     day_offsets = {day: i for i, day in enumerate(remaining)}
 
@@ -291,12 +337,13 @@ def generate_posts(
 def preview_posts(data: dict):
     """Print a readable preview of generated posts."""
     type_icons = {
-        "industry_news":  "📰",
-        "bridge":         "🌉",
-        "industry_trend": "📈",
+        "industry_news":    "📰",
+        "bridge":           "🌉",
+        "industry_trend":   "📈",
         "model_comparison": "⚖️",
-        "learning":       "🎓",
-        "opinion":        "💡",
+        "opinion":          "💡",
+        "learning":         "🎓",
+        "build_in_public":  "🏗️",
     }
 
     print(f"\n{'='*65}")
