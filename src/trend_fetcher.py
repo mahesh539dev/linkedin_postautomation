@@ -7,10 +7,13 @@ Optional: SerpAPI Google News (if SERPAPI_KEY is set).
 Results are cached in-memory for 3 hours.
 """
 
+import logging
 import os
 import time
 import requests
 from src.config import SERPAPI_KEY
+
+log = logging.getLogger(__name__)
 
 _CACHE_TTL = 3 * 3600  # 3 hours
 _cache: dict = {"data": None, "fetched_at": 0.0}
@@ -48,7 +51,7 @@ def _fetch_hn() -> list[dict]:
                         "source":  "HackerNews",
                     })
         except Exception as e:
-            print(f"trend_fetcher: HN query '{query}' failed — {e}")
+            log.error(f"HN query '{query}' failed — {e}")
     return items
 
 
@@ -70,7 +73,7 @@ def _fetch_serpapi() -> list[dict]:
             if title and url:
                 items.append({"title": title, "url": url, "points": 0, "source": "GoogleNews"})
     except Exception as e:
-        print(f"trend_fetcher: SerpAPI failed — {e}")
+        log.error(f"SerpAPI failed — {e}")
     return items
 
 
@@ -78,7 +81,7 @@ def fetch_trends() -> list[dict]:
     """
     Return up to 25 normalised trend items.
     Uses in-memory cache with 3-hour TTL.
-    Never raises — returns partial data on failure.
+    Raises RuntimeError if no trends could be fetched from any source.
     """
     now = time.time()
     if _cache["data"] is not None and (now - _cache["fetched_at"]) < _CACHE_TTL:
@@ -96,7 +99,13 @@ def fetch_trends() -> list[dict]:
         if len(unique) >= 25:
             break
 
+    if not unique:
+        raise RuntimeError(
+            "fetch_trends: no trends fetched from HN or SerpAPI — "
+            "check network connectivity and SERPAPI_KEY"
+        )
+
     _cache["data"] = unique
     _cache["fetched_at"] = now
-    print(f"trend_fetcher: fetched {len(unique)} trends ({len(_fetch_hn.__doc__ or '')} sources)")
+    log.info(f"Fetched {len(unique)} trends (HN + SerpAPI)")
     return unique

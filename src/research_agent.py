@@ -7,7 +7,6 @@ MLOps, Kafka, LLMs, and backend engineering each week.
 Finds 5 post-worthy topics with angles specific to Mahesh's transition story.
 """
 
-import anthropic
 import json
 import os
 from datetime import datetime
@@ -51,8 +50,10 @@ For each topic you find, provide:
 3. The angle a backend engineer (Kafka/Spring Boot) would uniquely bring
 4. A hook sentence that would stop scrolling on LinkedIn
 
-Be specific. Not "AI is growing fast" but "vLLM 0.7 released with 40%
-throughput improvement on A100s — here's what changed in the batching logic"
+Be specific. Style example (do NOT use this as a topic — find real news):
+"vLLM v0.X.Y released with N% throughput improvement — here's the actual change"
+That level of specificity is the target. The actual topics must come from the
+provided trending headlines, not from this example.
 """
 
 RESEARCH_USER_PROMPT = """
@@ -70,6 +71,10 @@ Search the web for the most relevant and timely topics from the PAST 7 DAYS in:
 5. Kubernetes/cloud AI deployment patterns
 6. Backend engineering + AI intersection (any language)
 7. RAG, agents, or LLM deployment patterns getting traction
+
+IMPORTANT: You MUST select topics exclusively from the provided trending headlines
+above. Do NOT invent topics, reuse examples from this prompt, or pick generic
+evergreen content. Every topic must trace back to a specific headline in the list.
 
 Find 6 topics total. Return as JSON:
 {{
@@ -204,94 +209,6 @@ def display_research(data: dict):
                 print(f"     {day}: {topic_rank}")
 
     print(f"\n{'='*65}\n")
-
-
-# ── Fallback topics (when API unavailable) ────────────────────────────────────
-
-FALLBACK_TOPICS = {
-    "week_theme": "AI Infrastructure Evolution",
-    "topics": [
-        {
-            "rank": 1,
-            "category": "LLM Infrastructure",
-            "headline": "vLLM continuous batching cuts inference latency by 30-40% vs naive approaches",
-            "source": "vLLM docs + community benchmarks",
-            "why_it_matters": "Throughput optimization is the #1 cost driver in production LLM systems. Understanding batching is critical for any AI infra engineer.",
-            "backend_angle": "Kafka engineers already think about batch.size vs linger.ms tradeoffs. vLLM batching is the same optimization, different domain.",
-            "linkedin_hook": "The same batching trade-off I tune in Kafka every day is what makes vLLM 40% faster than naive LLM serving.",
-            "suggested_post_type": "bridge",
-            "freshness": "evergreen"
-        },
-        {
-            "rank": 2,
-            "category": "MLOps",
-            "headline": "LangSmith now supports distributed tracing across multi-agent LangGraph workflows",
-            "source": "LangChain blog",
-            "why_it_matters": "Observability in multi-agent systems is the hardest unsolved problem in AI infrastructure today.",
-            "backend_angle": "Same as distributed tracing in microservices — but LLM calls are non-deterministic, making root cause analysis much harder.",
-            "linkedin_hook": "Debugging a multi-agent LangGraph system without LangSmith is like debugging a Kafka consumer with no monitoring. Here's why.",
-            "suggested_post_type": "industry_news",
-            "freshness": "recent"
-        },
-        {
-            "rank": 3,
-            "category": "Industry Trend",
-            "headline": "Enterprise RAG adoption hitting a wall: retrieval quality, not LLMs, is the bottleneck",
-            "source": "Multiple engineering blogs + LinkedIn discussions",
-            "why_it_matters": "Most companies find their RAG systems hallucinate because of bad retrieval, not bad generation. The solution is better data pipelines.",
-            "backend_angle": "Backend engineers understand data pipeline quality better than most AI teams. Kafka + data quality = the missing piece.",
-            "linkedin_hook": "Unpopular opinion: 80% of failed RAG systems aren't LLM problems. They're data pipeline problems.",
-            "suggested_post_type": "opinion",
-            "freshness": "trending"
-        },
-        {
-            "rank": 4,
-            "category": "Vector DB",
-            "headline": "pgvector vs Pinecone at scale: PostgreSQL wins on cost, loses on query latency above 10M vectors",
-            "source": "Community benchmarks",
-            "why_it_matters": "Choosing the wrong vector store is expensive to undo. Backend engineers need the tradeoff map.",
-            "backend_angle": "Same as Oracle vs MySQL vs MongoDB decisions — choose based on your scale and access patterns, not hype.",
-            "linkedin_hook": "pgvector vs Pinecone: I ran the benchmarks so you don't have to. Here's the honest tradeoff.",
-            "suggested_post_type": "industry_trend",
-            "freshness": "evergreen"
-        },
-        {
-            "rank": 5,
-            "category": "Streaming+AI",
-            "headline": "Real-time AI pipelines: Kafka + Flink + LLM inference becoming standard pattern in fintech",
-            "source": "Confluent blog + Flink community",
-            "why_it_matters": "Event-driven AI is the future of intelligent financial systems. Kafka engineers are perfectly positioned for this.",
-            "backend_angle": "7 years of Kafka expertise becomes your AI infrastructure superpower when you add LLM inference to the pipeline.",
-            "linkedin_hook": "Kafka + LLM inference = the fintech AI pipeline nobody is talking about. Here's the architecture.",
-            "suggested_post_type": "industry_trend",
-            "freshness": "recent"
-        },
-        {
-            "rank": 6,
-            "category": "Backend+AI",
-            "headline": "Spring AI 1.0 milestone: Java developers can now build RAG systems without leaving their ecosystem",
-            "source": "Spring blog",
-            "why_it_matters": "Java shops no longer need Python AI teams. Backend engineers can own the full AI pipeline.",
-            "backend_angle": "Spring AI bridges the Java/Python gap — exactly the transition path backend engineers need.",
-            "linkedin_hook": "Spring AI 1.0 just eliminated the main reason Java engineers couldn't do AI. Here's what changed.",
-            "suggested_post_type": "industry_news",
-            "freshness": "recent"
-        }
-    ],
-    "recommended_post_order": [2, "bridge from your expertise", 3, "your learning this week", 5]
-}
-
-
-def get_fallback_topics(week_number: int) -> dict:
-    """Return curated fallback topics if API search fails."""
-    data = FALLBACK_TOPICS.copy()
-    data["week"] = week_number
-    data["research_date"] = datetime.now().strftime("%A, %B %d %Y")
-    data["note"] = "Fallback topics — Claude web search unavailable"
-    return data
-
-# Alias for backwards compatibility
-get_fallback = get_fallback_topics
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
