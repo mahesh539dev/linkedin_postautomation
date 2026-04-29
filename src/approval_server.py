@@ -12,6 +12,7 @@ import hmac
 import threading
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify, render_template_string, redirect
 from dotenv import load_dotenv
 from src.email_utils import send_email
@@ -49,8 +50,11 @@ def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
     if not token or not channel_id:
         return {"success": False, "error": "BUFFER_ACCESS_TOKEN or BUFFER_PROFILE_ID not set in Railway env vars"}
 
-    dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
-    due_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    # scheduled_datetime is in America/Toronto (EST/EDT); convert to UTC for Buffer
+    dt_local = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S").replace(
+        tzinfo=ZoneInfo("America/Toronto")
+    )
+    due_at = dt_local.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {

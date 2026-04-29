@@ -14,6 +14,7 @@ import os
 import sys
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -65,8 +66,11 @@ def test_connection():
 
 def schedule_post(content: str, scheduled_datetime: str) -> dict:
     token, channel_id = get_credentials()
-    dt     = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
-    due_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    # scheduled_datetime is in America/Toronto (EST/EDT); convert to UTC for Buffer
+    dt_local = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S").replace(
+        tzinfo=ZoneInfo("America/Toronto")
+    )
+    due_at = dt_local.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {

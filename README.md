@@ -1,32 +1,98 @@
-# LinkedIn Post Automation — AI Infrastructure Learning Journey
+# LinkedIn Post Automation
 
-Automated LinkedIn content pipeline for Mahesh Annapureddy's 90-day AI Infrastructure Engineer transition. Converts weekly learning notes into 5 polished posts using a multi-model AI pipeline, with email-based approval and Buffer scheduling.
+Automated LinkedIn content pipeline for Mahesh Annapureddy's AI Infrastructure Engineer transition. Every week it turns raw learning notes into 5 scored, reviewed, and scheduled LinkedIn posts — with a full multi-model AI pipeline and zero manual scheduling.
 
 ---
 
-## How It Works
+## Architecture
 
 ```
-Sunday 9 AM (GitHub Actions)
-        ↓
-Email 1: "What did you learn this week?" → form link
-        ↓
-You fill form (3-5 min)
-        ↓
-Railway server (background):
-  1. Fetch trends  — HN Algolia (free) + optional SerpAPI
-  2. Rank topics   — DeepSeek via OpenRouter  (~$0.003)
-  3. Generate posts — Kimi via OpenRouter      (~$0.011)
-  4. Refine         — Claude Haiku             (~$0.010)
-        ↓
-Email 2: approval link with review UI
-        ↓
-You read, edit, approve (10-15 min)
-        ↓
-Buffer schedules 5 posts: Mon–Fri to LinkedIn
+┌─────────────────────────────────────────────────────────────────────┐
+│                        WEEKLY TRIGGER                               │
+│                                                                     │
+│   GitHub Actions cron                                               │
+│   Every Sunday 9 AM Toronto (2 PM UTC)                             │
+│          │                                                          │
+│          ▼                                                          │
+│   auto_run.py  ──►  Email 1: "What did you learn?"                 │
+│                      (Resend API / SMTP fallback)                   │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    RAILWAY FLASK SERVER                             │
+│                                                                     │
+│   GET  /input/<week>   ──►  Learning notes form (dark UI)          │
+│   POST /input/<week>   ──►  Submit notes → background thread       │
+│                                    │                               │
+│                    ┌───────────────▼───────────────┐               │
+│                    │    GENERATION PIPELINE        │               │
+│                    │                               │               │
+│                    │  trend_fetcher.py             │               │
+│                    │  HN Algolia + SerpAPI (opt.)  │               │
+│                    │          │                    │               │
+│                    │          ▼                    │               │
+│                    │  research_agent.py            │               │
+│                    │  DeepSeek (OpenRouter)        │               │
+│                    │  Ranks 21 topics → top 5      │               │
+│                    │          │                    │               │
+│                    │          ▼                    │               │
+│                    │  generate_posts.py            │               │
+│                    │  Kimi (OpenRouter)            │               │
+│                    │  5 posts from notes + topics  │               │
+│                    │          │                    │               │
+│                    │          ▼                    │               │
+│                    │  refinement.py                │               │
+│                    │  Claude Haiku                 │               │
+│                    │  Polish + brand voice         │               │
+│                    │          │                    │               │
+│                    │          ▼                    │               │
+│                    │  post_variants.py             │               │
+│                    │  Claude Sonnet → V2 rewrite   │               │
+│                    │  GPT-4o        → V3 rewrite   │               │
+│                    │  GPT-4o scores all 3 versions │               │
+│                    └───────────────────────────────┘               │
+│                                    │                               │
+│                                    ▼                               │
+│   Token stored in memory (48hr expiry)                             │
+│          │                                                          │
+│          ▼                                                          │
+│   Email 2: "Posts ready for review"                                │
+│   (Resend API / SMTP fallback)                                     │
+│                                                                     │
+│   GET  /review/<token>  ──►  Review UI: 3 tabs per post            │
+│                              V1·Kimi / V2·Claude / V3·OpenAI       │
+│                              Score badges + breakdown              │
+│                              Best version auto-selected            │
+│                                                                     │
+│   POST /approve/<token> ──►  Buffer GraphQL API                    │
+│                              createPost mutation                   │
+│                              EST→UTC conversion                    │
+│                              Scheduled Mon–Fri                     │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         LINKEDIN                                    │
+│                                                                     │
+│   Monday    10:00 EST  — Industry News                             │
+│   Tuesday   17:00 EST  — Bridge (Backend→AI analogy)              │
+│   Wednesday 10:00 EST  — Industry Trend                            │
+│   Thursday  17:00 EST  — Learning (personal)                       │
+│   Friday    10:00 EST  — Opinion / Hot take                        │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Cost per weekly run: ~$0.024** (vs ~$0.47+ with Claude-only)
+**Cost per weekly run: ~$0.024**
+
+| Step | Model | Cost |
+|---|---|---|
+| Trend fetching | HN Algolia (free) | $0.000 |
+| Topic ranking | DeepSeek V3 via OpenRouter | ~$0.003 |
+| Post generation (V1) | Kimi via OpenRouter | ~$0.011 |
+| Refinement | Claude Haiku | ~$0.010 |
+| V2 rewrite + scoring | Claude Sonnet | ~$0.020 |
+| V3 rewrite | GPT-4o | ~$0.015 |
 
 ---
 
@@ -35,15 +101,18 @@ Buffer schedules 5 posts: Mon–Fri to LinkedIn
 ```
 linkedin_postautomation/
 ├── src/
-│   ├── config.py               # All env vars and constants
-│   ├── llm_client.py           # OpenRouter gateway (DeepSeek / Kimi / MiniMax)
-│   ├── trend_fetcher.py        # HN Algolia + optional SerpAPI (3-hr cache)
+│   ├── config.py               # Env vars, week themes, learning questions
+│   ├── llm_client.py           # OpenRouter gateway (DeepSeek / Kimi / fallback)
+│   ├── trend_fetcher.py        # HN Algolia + optional SerpAPI (3hr cache)
 │   ├── research_agent.py       # Topic ranking via DeepSeek
-│   ├── generate_posts.py       # Post generation via Kimi
-│   ├── refinement.py           # Final polish via Claude Haiku
-│   ├── approval_server.py      # Flask server (input form + review UI)
-│   ├── schedule_posts.py       # Buffer API scheduling
-│   ├── auto_run.py             # GitHub Actions entry point
+│   ├── generate_posts.py       # Post generation + dynamic scheduling
+│   ├── linkedin_guidelines.py  # Scoring rubric + personalised system prompt
+│   ├── post_variants.py        # Claude Sonnet V2 + GPT-4o V3 + scoring
+│   ├── refinement.py           # Claude Haiku polish pass
+│   ├── email_utils.py          # Resend API (Railway) / SMTP fallback (GH Actions)
+│   ├── approval_server.py      # Flask: input form + review UI + Buffer scheduling
+│   ├── schedule_posts.py       # CLI: Buffer GraphQL API
+│   ├── auto_run.py             # GitHub Actions entry point (sends Email 1)
 │   └── __init__.py
 ├── posts/                      # Generated post JSON (gitignored)
 ├── research/                   # Research topic JSON (gitignored)
@@ -51,268 +120,240 @@ linkedin_postautomation/
 │   └── linkedin_sunday.yml     # Sunday 9 AM Toronto cron
 ├── .env.template               # Copy to .env and fill in keys
 ├── requirements.txt
-├── Procfile                    # Railway/Heroku startup
+├── Procfile                    # gunicorn startup for Railway
 └── railway.toml                # Railway config
 ```
 
 ---
 
-## API Keys You Need
+## Environment Variables
 
-| Key | Where to get | Used for |
+### Railway (server + generation)
+
+| Variable | Where to get | Required |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys | Claude Haiku refinement |
-| `OPENROUTER_API_KEY` | openrouter.ai/keys → Create Key | DeepSeek ranking + Kimi generation |
-| `BUFFER_ACCESS_TOKEN` | buffer.com/developers/apps → Create App | Schedule posts to LinkedIn |
-| `BUFFER_PROFILE_ID` | buffer.com/manage → LinkedIn channel → copy ID from URL | Target LinkedIn profile |
-| `SMTP_PASSWORD` | myaccount.google.com → Security → App passwords (16 chars) | Send approval emails |
-| `SERPAPI_KEY` | serpapi.com (optional, free tier 100/mo) | Enhanced Google News trends |
+| `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys | Yes |
+| `OPENROUTER_API_KEY` | openrouter.ai/keys | Yes |
+| `OPENAI_API_KEY` | platform.openai.com/api-keys | Yes |
+| `BUFFER_ACCESS_TOKEN` | publish.buffer.com/settings/api → Generate API Key | Yes |
+| `BUFFER_PROFILE_ID` | LinkedIn channel ID from Buffer channels query | Yes |
+| `RESEND_API_KEY` | resend.com → API Keys | Yes (Railway blocks SMTP) |
+| `SMTP_EMAIL` | Your Gmail address | Yes |
+| `SMTP_PASSWORD` | Gmail App Password (16 chars, 2FA required) | Fallback only |
+| `NOTIFY_EMAIL` | Where approval emails are sent | Yes |
+| `APPROVAL_SECRET` | Any random string | Yes |
+| `BASE_URL` | Your Railway URL (no trailing slash) | Yes |
+| `JOURNEY_START_DATE` | e.g. `2025-01-06` | Yes |
+| `USE_WEB_RESEARCH` | `true` to use live HN/SerpAPI, `false` for curated | Optional |
+| `SERPAPI_KEY` | serpapi.com (free tier 100/mo) | Optional |
+
+### GitHub Actions secrets (for Sunday email trigger only)
+
+| Secret | Value |
+|---|---|
+| `ANTHROPIC_API_KEY` | Same as Railway |
+| `SMTP_EMAIL` | Your Gmail |
+| `SMTP_PASSWORD` | Gmail App Password |
+| `NOTIFY_EMAIL` | Your email |
+| `APPROVAL_SECRET` | Same as Railway |
+| `APPROVAL_SERVER_URL` | Your Railway URL |
+| `BUFFER_ACCESS_TOKEN` | Same as Railway |
+| `BUFFER_PROFILE_ID` | Same as Railway |
+| `JOURNEY_START_DATE` | Same as Railway |
+
+> GitHub Actions only sends Email 1. All LLM generation happens on Railway when you submit the form.
 
 ---
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Clone and install
 
 ```bash
+git clone https://github.com/mahesh539dev/linkedin_postautomation
+cd linkedin_postautomation
 pip install -r requirements.txt
-```
-
-### 2. Configure environment
-
-```bash
 cp .env.template .env
 # Edit .env with your keys
 ```
 
-Required `.env` values:
-
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-OPENROUTER_API_KEY=sk-or-...
-BUFFER_ACCESS_TOKEN=...
-BUFFER_PROFILE_ID=...
-APPROVAL_SECRET=mahesh2025linkedin99
-SMTP_EMAIL=mahesh.annapureddy5@gmail.com
-SMTP_PASSWORD=xxxx xxxx xxxx xxxx
-NOTIFY_EMAIL=mahesh.annapureddy5@gmail.com
-BASE_URL=https://your-app.up.railway.app
-FLASK_ENV=production
-JOURNEY_START_DATE=2025-01-06
-TUESDAY_START_THIS_WEEK=false
-USE_WEB_RESEARCH=true
-SERPAPI_KEY=                          # leave blank to use HN API only
-```
-
-### 3. Test locally
+### 2. Get your Buffer channel ID
 
 ```bash
-# Start server
-python -m src.approval_server
-
-# Open form in browser
-open http://localhost:5000/input/2
-
-# Health check
-curl http://localhost:5000/health
+curl -X POST https://api.buffer.com/graphql \
+  -H "Authorization: Bearer YOUR_BUFFER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ channels { id name serviceType } }"}'
 ```
 
----
+Copy the `id` of your LinkedIn channel → set as `BUFFER_PROFILE_ID`.
 
-## Deploy to Railway
+### 3. Deploy to Railway
 
 ```bash
-# Install Railway CLI
 npm install -g @railway/cli
 railway login
-railway init      # name it: linkedin-automation
+railway init      # name: linkedin-automation
 railway up
-
-# Copy the URL from:
-railway domain
+railway domain    # copy the URL → set as BASE_URL
 
 # Set all variables
 railway variables set ANTHROPIC_API_KEY="sk-ant-..."
 railway variables set OPENROUTER_API_KEY="sk-or-..."
+railway variables set OPENAI_API_KEY="sk-..."
 railway variables set BUFFER_ACCESS_TOKEN="..."
 railway variables set BUFFER_PROFILE_ID="..."
-railway variables set APPROVAL_SECRET="mahesh2025linkedin99"
-railway variables set SMTP_EMAIL="mahesh.annapureddy5@gmail.com"
-railway variables set SMTP_PASSWORD="your-16-char-app-password"
-railway variables set NOTIFY_EMAIL="mahesh.annapureddy5@gmail.com"
-railway variables set BASE_URL="https://your-actual-url.up.railway.app"
-railway variables set FLASK_ENV="production"
+railway variables set RESEND_API_KEY="re_..."
+railway variables set SMTP_EMAIL="you@gmail.com"
+railway variables set SMTP_PASSWORD="xxxx xxxx xxxx xxxx"
+railway variables set NOTIFY_EMAIL="you@gmail.com"
+railway variables set APPROVAL_SECRET="your-secret"
+railway variables set BASE_URL="https://your-app.up.railway.app"
 railway variables set JOURNEY_START_DATE="2025-01-06"
-railway variables set TUESDAY_START_THIS_WEEK="false"
 railway variables set USE_WEB_RESEARCH="true"
-railway up
-
-# Verify
-curl https://your-app.up.railway.app/health
 ```
 
----
+### 4. Add GitHub Actions secrets
 
-## GitHub Actions (Sunday Automation)
+Repo → Settings → Secrets → Actions → New repository secret. Add all secrets from the table above.
 
-Workflow: `.github/workflows/linkedin_sunday.yml`
-Schedule: Every Sunday 9 AM Toronto time (2 PM UTC)
-
-### GitHub Secrets to add
-
-Go to: GitHub repo → Settings → Secrets → Actions → New repository secret
-
-| Secret | Value |
-|---|---|
-| `ANTHROPIC_API_KEY` | Your Claude key |
-| `BUFFER_ACCESS_TOKEN` | Your Buffer token |
-| `BUFFER_PROFILE_ID` | Your LinkedIn channel ID |
-| `APPROVAL_SECRET` | `mahesh2025linkedin99` |
-| `APPROVAL_SERVER_URL` | Your Railway URL |
-| `SMTP_EMAIL` | `mahesh.annapureddy5@gmail.com` |
-| `SMTP_PASSWORD` | Your 16-char app password |
-| `NOTIFY_EMAIL` | `mahesh.annapureddy5@gmail.com` |
-| `JOURNEY_START_DATE` | `2025-01-06` |
-
-> **Note:** `OPENROUTER_API_KEY` is NOT needed as a GitHub Secret — the Sunday cron only sends an email. All LLM calls happen on Railway when you submit the form.
-
-### Trigger manually
-
-```bash
-# From GitHub Actions tab: LinkedIn Sunday Automation → Run workflow
-# Or with gh CLI:
-gh workflow run linkedin_sunday.yml --field week_override=2 --field tuesday_start=true
-```
+> **Scheduled runs only trigger from the default branch.** Merge to `main` before relying on the Sunday cron. Manual `workflow_dispatch` runs work on any branch.
 
 ---
 
 ## Weekly Workflow
 
-### Automated (after full setup)
+### Automated (full setup)
 
-1. **Sunday 9 AM** — Email 1 arrives with "What did you learn?" form link
-2. **You** — Click link, fill form (3-5 min), submit
-3. **~3 min later** — Email 2 arrives with approval link
-4. **You** — Review/edit posts, click "Approve All & Schedule"
-5. **Mon–Fri** — Buffer posts to LinkedIn automatically
+```
+Sunday 9 AM  →  Email 1 arrives: "What did you learn this week?"
+You          →  Click link, fill form (3–5 min), submit
+~3 min later →  Email 2 arrives: approval link
+You          →  Review posts, pick best version, click Approve
+Mon–Fri      →  Buffer posts to LinkedIn automatically
+```
 
-### Manual run (any time)
+### Manual trigger (any day)
 
 ```bash
-# Option A: Open form in browser directly
+# Open input form directly
 open https://your-app.up.railway.app/input/2
 
-# Option B: Trigger GitHub Action manually
-gh workflow run linkedin_sunday.yml --field week_override=2
+# Or trigger GitHub Action (with optional week override)
+gh workflow run linkedin_sunday.yml --field week_override=3
 
-# Option C: Test Buffer connection
+# Test Buffer connection
 python -m src.schedule_posts --test
 
-# Option D: Dry-run scheduling (no actual Buffer posts)
+# Dry-run scheduling
 python -m src.schedule_posts --file posts/week_2.json --dry-run
 ```
+
+**Smart same-day scheduling:**
+- Triggered **before 2 PM** on a weekday → today's 5 PM slot is included
+- Triggered **after 2 PM** → posts start from next weekday
+- **Weekend** → posts schedule Mon–Fri next week
 
 ---
 
 ## Post Schedule
 
-| Day | Time | Type | Content |
-|---|---|---|---|
-| Monday | 10:00 | Industry News | Biggest AI/infra news — sharp backend take |
-| Tuesday | 17:00 | Bridge | Backend → AI concept analogy from your expertise |
-| Wednesday | 10:00 | Industry Trend | Broader AI infrastructure trend or tool update |
-| Thursday | 17:00 | Learning | What YOU learned or built this week |
-| Friday | 10:00 | Opinion | Bold hot take — polarising and memorable |
+All times are **EST/EDT (Toronto)**. The server converts to UTC automatically before sending to Buffer.
 
-Tuesday-start weeks (first week only): Tue–Fri, 4 posts.
+| Day | Time (EST) | Type | Focus |
+|---|---|---|---|
+| Monday | 10:00 | Industry News | Biggest AI/infra story — sharp backend take |
+| Tuesday | 17:00 | Bridge | Your backend expertise mapped to an AI concept |
+| Wednesday | 10:00 | Industry Trend | Broader AI/MLOps pattern or tool shift |
+| Thursday | 17:00 | Learning | One specific thing you learned or built |
+| Friday | 10:00 | Opinion | Bold, polarising take — confident, not aggressive |
+
+---
+
+## Review UI
+
+Each post shows 3 AI-generated versions:
+
+- **V1 · Kimi** — original generation
+- **V2 · Claude** — Sonnet rewrite with your brand voice
+- **V3 · OpenAI** — GPT-4o rewrite
+
+Each version is scored out of 100 across 7 dimensions:
+
+| Dimension | Max | What it checks |
+|---|---|---|
+| Hook | 20 | First line stops the scroll |
+| Specificity | 20 | Numbers, tool names, real examples |
+| Insight | 20 | Non-obvious, teaches something |
+| Voice | 15 | Matches your direct/confident tone |
+| Backend angle | 10 | Connects to your systems background |
+| Engagement | 10 | Question or call to action |
+| Format | 5 | Whitespace, line breaks, length |
+
+The best-scoring version is auto-selected (gold border on tab). You can switch tabs, edit the text, then approve.
 
 ---
 
 ## API Endpoints
 
 ```
-GET  /health              → {"status": "ok", "time": "..."}
-GET  /input/<week>        → Learning notes form
-POST /input/<week>        → Submit notes, triggers background generation
-GET  /review/<token>      → Post review and approval UI (48hr expiry)
-POST /approve/<token>     → Schedule approved posts to Buffer
-POST /submit-posts        → Direct post submission (X-Secret header required)
+GET  /health              →  {"status": "ok", "time": "..."}
+GET  /input/<week>        →  Learning notes form
+POST /input/<week>        →  Submit notes, trigger background generation
+GET  /review/<token>      →  Post review + approval UI (48hr expiry)
+POST /approve/<token>     →  Schedule approved posts to Buffer
+GET  /reviews?secret=...  →  List all pending review tokens
 ```
 
 ---
 
-## Cost Reference
+## Customise for Your Journey
 
-| Model | Used for | Rate | Cost/run |
-|---|---|---|---|
-| HN Algolia API | Trend fetching | Free | $0.000 |
-| SerpAPI | Google News (optional) | Free ≤100/mo | $0.000 |
-| DeepSeek V3 via OpenRouter | Topic ranking | $0.27/$1.10 per MTok | ~$0.003 |
-| Kimi moonshot-v1-8k via OpenRouter | Post generation | ~$0.33/$3.30 per MTok | ~$0.011 |
-| Claude Haiku 4.5 | Refinement polish | $0.80/$4.00 per MTok | ~$0.010 |
-| **Total** | | | **~$0.024/week** |
+Edit `src/config.py`:
 
-Load ~$5 on OpenRouter → covers ~200 weekly runs.
+```python
+# Your background — used in every generation prompt
+ENGINEER_CONTEXT = """
+Name: Your Name
+Role: Current role → Target role
+Background: Your years of experience, key technologies
+...
+"""
 
-To disable live research (use curated fallback topics, $0 cost):
-```env
-USE_WEB_RESEARCH=false
+# Per-week themes and learning questions
+WEEK_THEMES = {
+    2: "Your Week 2 Theme",
+    3: "Your Week 3 Theme",
+    ...
+}
+
+LEARNING_QUESTIONS = {
+    2: ["What surprised you?", "What did you build?", ...],
+    ...
+}
 ```
 
 ---
 
 ## Troubleshooting
 
-**Background generation failed: 429**
-- Old issue (Claude rate limits). Fixed — now uses OpenRouter models with no rate limit problem.
+**Email not sending from Railway**
+Railway blocks all SMTP ports. Add `RESEND_API_KEY` from resend.com (free, 3,000/month). GitHub Actions uses SMTP and works fine.
 
-**Buffer posting fails**
-- Run: `python -m src.schedule_posts --test`
-- Verify `BUFFER_ACCESS_TOKEN` and `BUFFER_PROFILE_ID` in Railway env vars
+**Buffer error: OIDC tokens not accepted**
+The token in Railway is a web session token. Get a personal API key: publish.buffer.com/settings/api → Generate API Key.
 
-**Email not sending**
-- Use Gmail App Password (16 chars), NOT your Gmail password
-- Enable 2FA first at myaccount.google.com → Security → App passwords
+**Buffer error: channel not found**
+Run the channels curl command in Setup step 2, copy the correct `id`, update `BUFFER_PROFILE_ID` in Railway.
+
+**Posts at wrong time**
+Verify `BASE_URL` in Railway points to your actual Railway URL, not localhost. The server uses `America/Toronto` timezone automatically.
 
 **Review link expired**
-- Tokens expire in 48 hours
-- Open the form again at `https://your-app.up.railway.app/input/<week>` and resubmit
+Tokens last 48 hours. Resubmit the form at `/input/<week>` to regenerate.
 
-**Server not responding**
-- Check Railway deployment: `railway logs`
-- Verify `BASE_URL` is set to your actual Railway URL (no trailing slash)
+**Kimi generation fails**
+llm_client.py has a fallback chain: Kimi → MiniMax → DeepSeek. If all OpenRouter models fail, check your `OPENROUTER_API_KEY` and credit balance at openrouter.ai.
 
-**OpenRouter errors**
-- Verify `OPENROUTER_API_KEY` is set on Railway
-- Add credit at openrouter.ai (minimum ~$5)
-- Model fallback chain: Kimi → MiniMax → DeepSeek auto-activates on failure
-
----
-
-## Customize for Your Journey
-
-Edit `src/config.py`:
-
-```python
-ENGINEER_CONTEXT = """
-Name: Your Name
-Role: Your current role → target role
-Background: Your experience
-...
-"""
-
-WEEK_THEMES = {
-    2: "Your Week 2 Theme",
-    ...
-}
-
-LEARNING_QUESTIONS = {
-    2: ["Question 1?", "Question 2?", ...],
-    ...
-}
-```
-
----
-
-Built for Mahesh Annapureddy's AI Infrastructure Engineer transition journey.
-Customize freely for your own 90-day learning sprint.
+**GitHub Actions cron not firing**
+The `schedule` trigger only fires from the default branch. Merge your branch to `main`.
