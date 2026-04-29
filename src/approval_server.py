@@ -21,7 +21,7 @@ load_dotenv()
 app = Flask(__name__)
 
 SECRET_KEY      = os.getenv("APPROVAL_SECRET", "change-me")
-BUFFER_API_BASE = "https://api.buffer.com/1"
+BUFFER_GRAPHQL = "https://api.buffer.com/graphql"
 
 def get_base_url():
     return os.getenv("BASE_URL", "http://localhost:5000").rstrip('/')
@@ -36,35 +36,56 @@ def _buffer_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
+def _buffer_gql(token: str, query: str, variables: dict = None) -> requests.Response:
+    body = {"query": query}
+    if variables:
+        body["variables"] = variables
+    return requests.post(BUFFER_GRAPHQL, headers=_buffer_headers(token), json=body, timeout=15)
+
+
 def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
     token      = os.getenv("BUFFER_ACCESS_TOKEN")
-    profile_id = os.getenv("BUFFER_PROFILE_ID")
-    if not token or not profile_id:
+    channel_id = os.getenv("BUFFER_PROFILE_ID")
+    if not token or not channel_id:
         return {"success": False, "error": "BUFFER_ACCESS_TOKEN or BUFFER_PROFILE_ID not set in Railway env vars"}
+
     dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
-    payload = {
-        "profile_ids":  [profile_id],
-        "text":         content,
-        "scheduled_at": int(dt.timestamp()),
-        "now":          False,
-        "shorten":      False,
+    scheduled_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    mutation = """
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        post { id status }
+      }
     }
-    r = requests.post(
-        f"{BUFFER_API_BASE}/updates/create.json",
-        headers=_buffer_headers(token),
-        json=payload,
-    )
-    if r.status_code == 200:
-        data = r.json()
-        if data.get("success"):
-            return {"success": True, "id": data.get("updates", [{}])[0].get("id")}
-        return {"success": False, "error": data.get("message", r.text[:200])}
+    """
+    variables = {
+        "input": {
+            "channelIds": [channel_id],
+            "content":    {"text": content},
+            "scheduledAt": scheduled_at,
+        }
+    }
+
     try:
-        err = r.json()
-        msg = err.get("error") or err.get("message") or str(err)
+        r = _buffer_gql(token, mutation, variables)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    try:
+        data = r.json()
     except Exception:
-        msg = r.text[:300]
-    return {"success": False, "error": f"HTTP {r.status_code}: {msg}"}
+        return {"success": False, "error": f"HTTP {r.status_code}: {r.text[:300]}"}
+
+    gql_errors = data.get("errors")
+    if gql_errors:
+        msg = "; ".join(e.get("message", str(e)) for e in gql_errors)
+        return {"success": False, "error": msg}
+
+    post = (data.get("data") or {}).get("createPost", {}).get("post")
+    if post:
+        return {"success": True, "id": post.get("id")}
+    return {"success": False, "error": f"Unexpected response: {str(data)[:300]}"}
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────

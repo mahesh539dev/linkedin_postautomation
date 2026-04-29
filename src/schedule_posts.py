@@ -18,11 +18,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BUFFER_API_BASE = "https://api.buffer.com/1"
+BUFFER_GRAPHQL = "https://api.buffer.com/graphql"
 
 
 def _headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def _gql(token: str, query: str, variables: dict = None) -> requests.Response:
+    body = {"query": query}
+    if variables:
+        body["variables"] = variables
+    return requests.post(BUFFER_GRAPHQL, headers=_headers(token), json=body, timeout=15)
 
 
 def get_credentials():
@@ -36,55 +43,58 @@ def get_credentials():
 
 
 def test_connection():
-    """Verify Buffer credentials work and list profiles."""
+    """Verify Buffer credentials and list channels (use id as BUFFER_PROFILE_ID)."""
     token, _ = get_credentials()
-    response = requests.get(f"{BUFFER_API_BASE}/profiles.json", headers=_headers(token))
-    if response.status_code == 200:
-        profiles = response.json()
-        for p in (profiles if isinstance(profiles, list) else []):
-            print(f"  Profile: {p.get('formatted_username', '?')} — ID: {p.get('id', '?')} — service: {p.get('service', '?')}")
-        print(f"  ✅ Buffer connected ({len(profiles)} profiles)")
-        return True
+    r = _gql(token, "{ channels { id name serviceType } }")
     try:
-        err = response.json()
-        msg = err.get("error") or err.get("message") or str(err)
+        data = r.json()
     except Exception:
-        msg = response.text[:200]
-    print(f"  ❌ Buffer connection failed {response.status_code}: {msg}")
-    return False
-
-
-def parse_scheduled_time(scheduled_datetime: str) -> int:
-    dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
-    return int(dt.timestamp())
+        print(f"  ❌ Buffer response not JSON: {r.text[:200]}")
+        return False
+    if r.status_code != 200 or data.get("errors"):
+        errs = data.get("errors", [])
+        msg  = "; ".join(e.get("message", str(e)) for e in errs) if errs else r.text[:200]
+        print(f"  ❌ Buffer connection failed: {msg}")
+        return False
+    channels = (data.get("data") or {}).get("channels", [])
+    for c in channels:
+        print(f"  Channel: {c.get('name','?')} — ID: {c.get('id','?')} — type: {c.get('serviceType','?')}")
+    print(f"  ✅ Buffer connected ({len(channels)} channels) — use the LinkedIn channel ID as BUFFER_PROFILE_ID")
+    return True
 
 
 def schedule_post(content: str, scheduled_datetime: str) -> dict:
-    token, profile_id = get_credentials()
-    scheduled_at = parse_scheduled_time(scheduled_datetime)
-    payload = {
-        "profile_ids": [profile_id],
-        "text":         content,
-        "scheduled_at": scheduled_at,
-        "now":          False,
-        "shorten":      False,
+    token, channel_id = get_credentials()
+    dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
+    scheduled_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    mutation = """
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        post { id status }
+      }
     }
-    response = requests.post(
-        f"{BUFFER_API_BASE}/updates/create.json",
-        headers=_headers(token),
-        json=payload,
-    )
-    if response.status_code == 200:
-        data = response.json()
-        if data.get("success"):
-            return {"success": True, "update_id": data.get("updates", [{}])[0].get("id")}
-        return {"success": False, "error": data.get("message", "Unknown error")}
+    """
+    r = _gql(token, mutation, {
+        "input": {
+            "channelIds":  [channel_id],
+            "content":     {"text": content},
+            "scheduledAt": scheduled_at,
+        }
+    })
     try:
-        err = response.json()
-        msg = err.get("error") or err.get("message") or str(err)
+        data = r.json()
     except Exception:
-        msg = response.text[:300]
-    return {"success": False, "error": f"HTTP {response.status_code}: {msg}"}
+        return {"success": False, "error": f"HTTP {r.status_code}: {r.text[:300]}"}
+
+    if data.get("errors"):
+        msg = "; ".join(e.get("message", str(e)) for e in data["errors"])
+        return {"success": False, "error": msg}
+
+    post = (data.get("data") or {}).get("createPost", {}).get("post")
+    if post:
+        return {"success": True, "update_id": post.get("id")}
+    return {"success": False, "error": f"Unexpected response: {str(data)[:300]}"}
 
 
 def schedule_all_posts(posts_file: str, dry_run: bool = False) -> list:
