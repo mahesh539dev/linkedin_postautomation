@@ -22,7 +22,10 @@ load_dotenv()
 app = Flask(__name__)
 
 SECRET_KEY      = os.getenv("APPROVAL_SECRET", "change-me")
-BUFFER_GRAPHQL = "https://api.buffer.com/graphql"
+BUFFER_GRAPHQL  = "https://api.buffer.com/graphql"
+
+# week → dynamically generated questions (populated by /select-week/<week>)
+pending_questions: dict[int, list[str]] = {}
 
 def get_base_url():
     return os.getenv("BASE_URL", "http://localhost:5000").rstrip('/')
@@ -144,20 +147,12 @@ def send_review_email(to_email: str, review_token: str, week: int, posts: list) 
 def generate_and_store(week: int, notes: str):
     """Run research → generation → variants → store token → email user."""
     try:
-        from src.research_agent import get_fallback_topics
+        from src.research_agent import research_weekly_topics
         from src.generate_posts import generate_posts
 
-        use_web = os.getenv("USE_WEB_RESEARCH", "false").lower() == "true"
-        if use_web:
-            from src.research_agent import research_weekly_topics
-            try:
-                research = research_weekly_topics(week, save=True)
-            except Exception as e:
-                print(f"Web research failed ({e}), falling back to curated topics")
-                research = get_fallback_topics(week)
-        else:
-            print("Using curated fallback topics (web research disabled)")
-            research = get_fallback_topics(week)
+        print(f"[Week {week}] Starting web research...")
+        research = research_weekly_topics(week, save=True)
+        print(f"[Week {week}] Research complete — {len(research.get('topics', []))} topics")
 
         data = generate_posts(week, research, notes, save=True)
 
@@ -165,13 +160,15 @@ def generate_and_store(week: int, notes: str):
             from src.refinement import refine_posts
             data["posts"] = refine_posts(data["posts"])
         except Exception as e:
-            print(f"Refinement step failed ({e}), continuing with unrefined posts")
+            print(f"ERROR: Refinement step failed — {e}")
+            print("Continuing with unrefined posts")
 
         try:
             from src.post_variants import create_variants
             data["posts"] = create_variants(data["posts"])
         except Exception as e:
-            print(f"Variant generation failed ({e}), continuing with single version")
+            print(f"ERROR: Variant generation failed — {e}")
+            print("Continuing with single version — check ANTHROPIC_API_KEY and OPENAI_API_KEY")
 
         token      = str(uuid.uuid4()).replace("-", "")[:24]
         expires_at = datetime.now() + timedelta(hours=48)
@@ -195,7 +192,11 @@ def generate_and_store(week: int, notes: str):
         print("=" * 60)
 
     except Exception as e:
-        print(f"Background generation failed: {e}")
+        import traceback
+        print("=" * 60)
+        print(f"GENERATION FAILED — Week {week}: {e}")
+        print(traceback.format_exc())
+        print("=" * 60)
 
 
 # ── Input form HTML ───────────────────────────────────────────────────────────
@@ -616,15 +617,84 @@ def list_reviews():
     return jsonify({"pending": len(items), "reviews": items})
 
 
+@app.route("/select-week/<int:week>")
+def select_week(week):
+    """
+    Called when user clicks a week button in Email 1.
+    Generates dynamic questions via OpenRouter, stores them, sends Email 2,
+    and shows a confirmation page.
+    """
+    from src.roadmap import generate_questions, WEEK_CONTENT
+    to_email = os.getenv("NOTIFY_EMAIL", "")
+    topic    = WEEK_CONTENT.get(week, f"Week {week}")
+
+    try:
+        print(f"[Week {week}] Generating questions via DeepSeek...")
+        questions = generate_questions(week)
+        pending_questions[week] = questions
+        print(f"[Week {week}] Generated {len(questions)} questions")
+    except Exception as e:
+        import traceback
+        print(f"ERROR: Question generation failed for week {week} — {e}")
+        print(traceback.format_exc())
+        return f"<h2 style='font-family:sans-serif;padding:40px;color:#ef4444'>" \
+               f"Question generation failed: {e}<br>Check Railway logs.</h2>", 500
+
+    # Send Email 2 — questions email
+    form_url  = f"{get_base_url()}/input/{week}"
+    q_html    = "".join(
+        f'<div style="background:#1e293b;border-left:3px solid #3b82f6;padding:12px 16px;'
+        f'margin-bottom:10px;border-radius:0 6px 6px 0">'
+        f'<p style="color:#94a3b8;font-size:12px;margin:0 0 4px;font-family:monospace">Q{i}</p>'
+        f'<p style="color:#e2e8f0;font-size:14px;margin:0">{q}</p></div>'
+        for i, q in enumerate(questions, 1)
+    )
+    html = f"""<html><body style="font-family:-apple-system,sans-serif;max-width:600px;
+margin:0 auto;padding:20px;background:#0a0f1e;color:#e2e8f0">
+<div style="background:linear-gradient(135deg,#0f2044,#0a1628);padding:28px;
+border-radius:12px;margin-bottom:20px;border:1px solid #1e3a5f">
+  <h1 style="color:#60a5fa;margin:0 0 6px;font-size:20px">📚 Week {week} Questions</h1>
+  <p style="color:#64748b;margin:0;font-size:13px;font-family:monospace">{topic[:80]}</p>
+</div>
+<p style="color:#94a3b8;font-size:14px;line-height:1.7;margin-bottom:20px">
+  Answer these in the form — be specific with numbers, tool names, and what actually happened.
+</p>
+{q_html}
+<div style="text-align:center;margin:28px 0">
+  <a href="{form_url}" style="background:linear-gradient(135deg,#3b82f6,#06d6a0);color:white;
+  padding:15px 38px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:700;
+  display:inline-block">✍️ Answer These Questions →</a>
+</div>
+<p style="color:#334155;font-size:12px;border-top:1px solid #1e293b;padding-top:14px;margin-top:16px">
+  Takes 3–5 minutes. Your notes drive the post quality — be specific.
+</p>
+</body></html>"""
+
+    sent = send_email(to_email, f"📚 Week {week} — Your learning questions", html)
+    if not sent:
+        print(f"ERROR: Questions email failed to send for week {week}")
+
+    return f"""<html><body style="font-family:-apple-system,sans-serif;max-width:500px;
+margin:80px auto;padding:20px;background:#0a0f1e;color:#e2e8f0;text-align:center">
+<h2 style="color:#06d6a0">✓ Questions sent to your email</h2>
+<p style="color:#94a3b8">Check <strong>{to_email}</strong> for Week {week} questions.<br>
+Click the link in the email to open the answer form.</p>
+<p style="margin-top:30px"><a href="{form_url}"
+style="color:#60a5fa;font-size:13px">Or open the form directly →</a></p>
+</body></html>"""
+
+
 @app.route("/input/<int:week>", methods=["GET"])
 def input_form(week):
-    from src.config import WEEK_THEMES, LEARNING_QUESTIONS
-    theme     = WEEK_THEMES.get(week, f"Week {week}")
-    questions = LEARNING_QUESTIONS.get(week, [
-        "What did you learn this week?",
-        "What clicked or surprised you?",
-        "What did you build or ship?",
-    ])
+    from src.roadmap import WEEK_CONTENT
+    theme     = WEEK_CONTENT.get(week, f"Week {week}")
+    questions = pending_questions.get(week) or [
+        "What specific tools or concepts did you work with this week?",
+        "What surprised you or didn't work as expected?",
+        "What did you build or implement — and what were the results?",
+        "How does what you learned connect to your backend engineering experience?",
+        "What's one thing you'd do differently based on this week?",
+    ]
     today = datetime.now().strftime("%A, %B %d")
     return render_template_string(
         INPUT_HTML,

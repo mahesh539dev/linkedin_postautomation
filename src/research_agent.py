@@ -301,18 +301,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Research trending LinkedIn topics using Claude")
     parser.add_argument("--week", type=int, required=True, help="Week number (2-9)")
-    parser.add_argument("--fallback", action="store_true", help="Use curated fallback topics (no API)")
     parser.add_argument("--no-save", action="store_true", help="Don't save to file")
     args = parser.parse_args()
 
-    if args.fallback:
-        data = get_fallback_topics(args.week)
-        print("Using fallback curated topics...")
-    else:
-        try:
-            data = research_weekly_topics(args.week, save=not args.no_save)
-        except Exception as e:
-            print(f"⚠️  Research failed ({e}), using fallback topics...")
-            data = get_fallback_topics(args.week)
+    data = research_weekly_topics(args.week, save=not args.no_save)
 
     display_research(data)
