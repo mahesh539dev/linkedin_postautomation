@@ -65,21 +65,24 @@ def test_connection():
 
 def schedule_post(content: str, scheduled_datetime: str) -> dict:
     token, channel_id = get_credentials()
-    dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
-    scheduled_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    dt     = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
+    due_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
-        post { id status }
+        ... on PostActionSuccess { post { id dueAt } }
+        ... on MutationError { message }
       }
     }
     """
     r = _gql(token, mutation, {
         "input": {
-            "channelIds":  [channel_id],
-            "content":     {"text": content},
-            "scheduledAt": scheduled_at,
+            "text":           content,
+            "channelId":      channel_id,
+            "schedulingType": "automatic",
+            "mode":           "customScheduled",
+            "dueAt":          due_at,
         }
     })
     try:
@@ -91,9 +94,11 @@ def schedule_post(content: str, scheduled_datetime: str) -> dict:
         msg = "; ".join(e.get("message", str(e)) for e in data["errors"])
         return {"success": False, "error": msg}
 
-    post = (data.get("data") or {}).get("createPost", {}).get("post")
-    if post:
-        return {"success": True, "update_id": post.get("id")}
+    result = (data.get("data") or {}).get("createPost", {})
+    if "post" in result:
+        return {"success": True, "update_id": result["post"].get("id")}
+    if "message" in result:
+        return {"success": False, "error": result["message"]}
     return {"success": False, "error": f"Unexpected response: {str(data)[:300]}"}
 
 

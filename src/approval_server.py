@@ -50,20 +50,23 @@ def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
         return {"success": False, "error": "BUFFER_ACCESS_TOKEN or BUFFER_PROFILE_ID not set in Railway env vars"}
 
     dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
-    scheduled_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    due_at = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
-        post { id status }
+        ... on PostActionSuccess { post { id dueAt } }
+        ... on MutationError { message }
       }
     }
     """
     variables = {
         "input": {
-            "channelIds": [channel_id],
-            "content":    {"text": content},
-            "scheduledAt": scheduled_at,
+            "text":           content,
+            "channelId":      channel_id,
+            "schedulingType": "automatic",
+            "mode":           "customScheduled",
+            "dueAt":          due_at,
         }
     }
 
@@ -82,9 +85,11 @@ def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
         msg = "; ".join(e.get("message", str(e)) for e in gql_errors)
         return {"success": False, "error": msg}
 
-    post = (data.get("data") or {}).get("createPost", {}).get("post")
-    if post:
-        return {"success": True, "id": post.get("id")}
+    result = (data.get("data") or {}).get("createPost", {})
+    if "post" in result:
+        return {"success": True, "id": result["post"].get("id")}
+    if "message" in result:
+        return {"success": False, "error": result["message"]}
     return {"success": False, "error": f"Unexpected response: {str(data)[:300]}"}
 
 
