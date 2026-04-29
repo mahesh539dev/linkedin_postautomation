@@ -21,7 +21,7 @@ load_dotenv()
 app = Flask(__name__)
 
 SECRET_KEY      = os.getenv("APPROVAL_SECRET", "change-me")
-BUFFER_API_BASE = "https://api.bufferapp.com/1"
+BUFFER_API_BASE = "https://api.buffer.com/1"
 
 def get_base_url():
     return os.getenv("BASE_URL", "http://localhost:5000").rstrip('/')
@@ -32,6 +32,10 @@ pending_reviews = {}
 
 # ── Buffer ────────────────────────────────────────────────────────────────────
 
+def _buffer_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
 def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
     token      = os.getenv("BUFFER_ACCESS_TOKEN")
     profile_id = os.getenv("BUFFER_PROFILE_ID")
@@ -39,20 +43,22 @@ def schedule_to_buffer(content: str, scheduled_datetime: str) -> dict:
         return {"success": False, "error": "BUFFER_ACCESS_TOKEN or BUFFER_PROFILE_ID not set in Railway env vars"}
     dt = datetime.strptime(scheduled_datetime, "%Y-%m-%d %H:%M:%S")
     payload = {
-        "access_token":  token,
-        "profile_ids[]": profile_id,
-        "text":          content,
-        "scheduled_at":  int(dt.timestamp()),
-        "now":           False,
-        "shorten":       False,
+        "profile_ids":  [profile_id],
+        "text":         content,
+        "scheduled_at": int(dt.timestamp()),
+        "now":          False,
+        "shorten":      False,
     }
-    r = requests.post(f"{BUFFER_API_BASE}/updates/create.json", data=payload)
+    r = requests.post(
+        f"{BUFFER_API_BASE}/updates/create.json",
+        headers=_buffer_headers(token),
+        json=payload,
+    )
     if r.status_code == 200:
         data = r.json()
         if data.get("success"):
             return {"success": True, "id": data.get("updates", [{}])[0].get("id")}
         return {"success": False, "error": data.get("message", r.text[:200])}
-    # Parse JSON error body if possible
     try:
         err = r.json()
         msg = err.get("error") or err.get("message") or str(err)
